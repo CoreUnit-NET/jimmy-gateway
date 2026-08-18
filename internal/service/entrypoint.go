@@ -23,8 +23,6 @@ import (
 	"github.com/CoreUnit-NET/jimmy-gateway/lib/chatjimmy"
 )
 
-const upstreamTimeout = 120 * time.Second
-
 // RunOptions configures the HTTP proxy server started by Run.
 type RunOptions struct {
 	Logger      *log.Logger
@@ -54,9 +52,22 @@ func Run(opts RunOptions) error {
 		displayName = "jimmy-gateway"
 	}
 
+	timeout := time.Duration(cfg.ChatJimmyTimeout) * time.Second
+	if timeout <= 0 {
+		timeout = time.Duration(config.DefaultChatJimmyTimeout) * time.Second
+	}
+	upstreamURL := strings.TrimSpace(cfg.ChatJimmyURL)
+	if upstreamURL == "" {
+		upstreamURL = chatjimmy.DefaultUpstreamURL
+	}
+
 	client := &chatjimmy.Client{
-		URL:     chatjimmy.DefaultUpstreamURL,
-		Timeout: upstreamTimeout,
+		HTTP:         &http.Client{Timeout: timeout},
+		URL:          upstreamURL,
+		Timeout:      timeout,
+		APIKey:       cfg.ChatJimmyAPIKey,
+		MaxRetries:   chatjimmy.DefaultMaxRetries,
+		RetryBackoff: time.Second,
 	}
 	handler := NewHandler(logger, cfg, client)
 
@@ -66,7 +77,7 @@ func Run(opts RunOptions) error {
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      upstreamTimeout + 10*time.Second,
+		WriteTimeout:      timeout + 10*time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 
@@ -80,12 +91,13 @@ func Run(opts RunOptions) error {
 		version = "dev"
 	}
 	logger.Printf(
-		"%s %s listening on http://%s (gateway auth: %s, upstream: %s)",
+		"%s %s listening on http://%s (gateway auth: %s, origin: %s, upstream: %s)",
 		displayName,
 		version,
 		addr,
 		authMode,
-		chatjimmy.DefaultUpstreamURL,
+		cfg.AllowedOrigin,
+		upstreamURL,
 	)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

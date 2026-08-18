@@ -1,12 +1,15 @@
 package service
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/CoreUnit-NET/jimmy-gateway/internal/config"
 	"github.com/CoreUnit-NET/jimmy-gateway/lib/chatjimmy"
@@ -16,6 +19,22 @@ func testConfig() *config.AppConfig {
 	cfg := config.DefaultAppConfigForTest()
 	cfg.APIKey = "secret"
 	return cfg
+}
+
+func TestLogChatCompactionAlways(t *testing.T) {
+	var buf bytes.Buffer
+	h := NewHandler(log.New(&buf, "", 0), config.DefaultAppConfigForTest(), &chatjimmy.Client{})
+	h.logChat("openai", chatjimmy.DefaultModel, time.Now(), true, true, chatjimmy.Usage{})
+	got := buf.String()
+	if !strings.Contains(got, "dropped tools JSON") {
+		t.Fatalf("log = %q, want compaction message", got)
+	}
+	if !strings.Contains(got, "system prompt truncated") {
+		t.Fatalf("log = %q, want truncate message", got)
+	}
+	if strings.Contains(got, "chat kind=") {
+		t.Fatalf("verbose latency log leaked without verbose: %q", got)
+	}
 }
 
 func TestHandlerHealth(t *testing.T) {
@@ -48,6 +67,31 @@ func TestHandlerOptions(t *testing.T) {
 	}
 	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
 		t.Fatal("expected CORS header")
+	}
+	if rec.Header().Get("Vary") != "" {
+		t.Fatalf("Vary = %q, want empty for * origin", rec.Header().Get("Vary"))
+	}
+}
+
+func TestHandlerOptionsAllowedOrigin(t *testing.T) {
+	cfg := testConfig()
+	cfg.AllowedOrigin = "https://app.example"
+	h := NewHandler(nil, cfg, &chatjimmy.Client{})
+	req := httptest.NewRequest(http.MethodOptions, "/v1/chat/completions", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", rec.Code)
+	}
+	if rec.Header().Get("Access-Control-Allow-Origin") != "https://app.example" {
+		t.Fatalf("origin = %q", rec.Header().Get("Access-Control-Allow-Origin"))
+	}
+	if rec.Header().Get("Vary") != "Origin" {
+		t.Fatalf("Vary = %q, want Origin", rec.Header().Get("Vary"))
+	}
+	allow := rec.Header().Get("Access-Control-Allow-Headers")
+	if !strings.Contains(allow, "x-api-key") {
+		t.Fatalf("Allow-Headers = %q", allow)
 	}
 }
 
@@ -230,6 +274,18 @@ func TestHandlerChatCompletionsStream(t *testing.T) {
 	}
 }
 
+func TestHandlerChatCompletionsBodyTooLarge(t *testing.T) {
+	cfg := config.DefaultAppConfigForTest()
+	h := NewHandler(nil, cfg, &chatjimmy.Client{})
+	body := strings.NewReader(strings.Repeat("x", maxRequestBytes+1))
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHandlerChatCompletionsInvalidJSON(t *testing.T) {
 	cfg := config.DefaultAppConfigForTest()
 	h := NewHandler(nil, cfg, &chatjimmy.Client{})
@@ -381,5 +437,230 @@ func TestHandlerChatCompletionsToolResponse(t *testing.T) {
 	choice := choices[0].(map[string]any)
 	if choice["finish_reason"] != "tool_calls" {
 		t.Fatalf("finish_reason = %#v", choice["finish_reason"])
+	}
+}
+
+func TestHandlerModelsExtras(t *testing.T) {
+	cfg := testConfig()
+	cfg.ChatJimmyModel = "custom-model"
+	cfg.ChatJimmyModels = "extra-a, extra-b"
+	h := NewHandler(nil, cfg, &chatjimmy.Client{})
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	data := body["data"].([]any)
+	first := data[0].(map[string]any)
+	if first["id"] != "custom-model" {
+		t.Fatalf("first id = %#v", first["id"])
+	}
+	want := map[string]bool{"extra-a": false, "extra-b": false}
+	for _, item := range data {
+		id := item.(map[string]any)["id"].(string)
+		if _, ok := want[id]; ok {
+			want[id] = true
+		}
+	}
+	for id, found := range want {
+		if !found {
+			t.Fatalf("missing extra model %q", id)
+		}
+	}
+}
+
+func TestHandlerAuthXAPIKey(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`ok`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	h := NewHandler(nil, testConfig(), &chatjimmy.Client{URL: upstream.URL})
+	body := strings.NewReader(`{"messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+	req.Header.Set("x-api-key", "secret")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandlerNativeChat(t *testing.T) {
+	var upstreamBody map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &upstreamBody)
+		_, _ = w.Write([]byte("raw-ok"))
+	}))
+	t.Cleanup(upstream.Close)
+
+	h := NewHandler(nil, testConfig(), &chatjimmy.Client{URL: upstream.URL})
+	body := strings.NewReader(`{"messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/chat", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != "raw-ok" {
+		t.Fatalf("body = %q", rec.Body.String())
+	}
+	if !strings.Contains(rec.Header().Get("Content-Type"), "text/plain") {
+		t.Fatalf("content-type = %q", rec.Header().Get("Content-Type"))
+	}
+	opts := upstreamBody["chatOptions"].(map[string]any)
+	if opts["selectedModel"] != chatjimmy.DefaultModel {
+		t.Fatalf("selectedModel = %#v", opts["selectedModel"])
+	}
+}
+
+func TestHandlerNativeChatEmptyMessages(t *testing.T) {
+	h := NewHandler(nil, testConfig(), &chatjimmy.Client{})
+	body := strings.NewReader(`{"messages":[]}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/chat", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandlerChatCompletionsToolChoiceNoneSkipsParse(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`<tool_call>{"name":"read","arguments":{"path":"x"}}</tool_call>`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	cfg := config.DefaultAppConfigForTest()
+	h := NewHandler(nil, cfg, &chatjimmy.Client{URL: upstream.URL})
+	body := strings.NewReader(`{
+		"messages":[{"role":"user","content":"read file"}],
+		"tool_choice":"none",
+		"tools":[{"type":"function","function":{"name":"read"}}]
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var completion chatjimmy.Completion
+	if err := json.Unmarshal(rec.Body.Bytes(), &completion); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if completion.Choices[0].FinishReason != "stop" {
+		t.Fatalf("finish_reason = %q", completion.Choices[0].FinishReason)
+	}
+	if len(completion.Choices[0].Message.ToolCalls) != 0 {
+		t.Fatalf("tool_calls = %+v", completion.Choices[0].Message.ToolCalls)
+	}
+	if completion.Choices[0].Message.Content == nil || !strings.Contains(*completion.Choices[0].Message.Content, "<tool_call>") {
+		t.Fatalf("content = %#v", completion.Choices[0].Message.Content)
+	}
+}
+
+func TestHandlerAnthropicMessages(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`Hello from jimmy`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	h := NewHandler(nil, testConfig(), &chatjimmy.Client{URL: upstream.URL})
+	body := strings.NewReader(`{"model":"claude-3-haiku-20240307","max_tokens":32,"messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", body)
+	req.Header.Set("x-api-key", "secret")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var msg chatjimmy.AnthropicMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &msg); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if msg.Type != "message" || msg.Role != "assistant" {
+		t.Fatalf("msg = %+v", msg)
+	}
+	if len(msg.Content) == 0 || msg.Content[0].Text != "Hello from jimmy" {
+		t.Fatalf("content = %+v", msg.Content)
+	}
+}
+
+func TestHandlerGeminiGenerate(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`Hello gemini`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	h := NewHandler(nil, testConfig(), &chatjimmy.Client{URL: upstream.URL})
+	body := strings.NewReader(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-1.5-flash:generateContent", body)
+	req.Header.Set("x-goog-api-key", "secret")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp chatjimmy.GeminiResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Candidates) == 0 || resp.Candidates[0].Content.Parts[0].Text != "Hello gemini" {
+		t.Fatalf("resp = %+v", resp)
+	}
+}
+
+func TestHandlerGeminiStream(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`streamed`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	cfg := config.DefaultAppConfigForTest()
+	h := NewHandler(nil, cfg, &chatjimmy.Client{URL: upstream.URL})
+	body := strings.NewReader(`{"contents":[{"parts":[{"text":"hi"}]}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-1.5-flash:streamGenerateContent", body)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Header().Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("content-type = %q", rec.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(rec.Body.String(), "streamed") {
+		t.Fatalf("body = %q", rec.Body.String())
+	}
+}
+
+func TestParseGeminiPath(t *testing.T) {
+	tests := []struct {
+		in     string
+		model  string
+		stream bool
+		ok     bool
+	}{
+		{"/v1beta/models/gemini-1.5-flash:generateContent", "gemini-1.5-flash", false, true},
+		{"/v1beta/models/gemini-1.5-flash:streamGenerateContent", "gemini-1.5-flash", true, true},
+		{"/v1beta/models/:generateContent", "", false, false},
+		{"/v1/chat/completions", "", false, false},
+	}
+	for _, tc := range tests {
+		model, stream, ok := parseGeminiPath(tc.in)
+		if model != tc.model || stream != tc.stream || ok != tc.ok {
+			t.Fatalf("parseGeminiPath(%q) = %q %t %t, want %q %t %t", tc.in, model, stream, ok, tc.model, tc.stream, tc.ok)
+		}
 	}
 }

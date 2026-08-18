@@ -13,6 +13,24 @@ func resolvePath(pathname string) string {
 	return normalizePath(mapAliasPath(normalizePath(pathname)))
 }
 
+func parseGeminiPath(pathname string) (model string, stream bool, ok bool) {
+	const prefix = "/v1beta/models/"
+	if !strings.HasPrefix(pathname, prefix) {
+		return "", false, false
+	}
+	rest := strings.TrimPrefix(pathname, prefix)
+	switch {
+	case strings.HasSuffix(rest, ":streamGenerateContent"):
+		model = strings.TrimSuffix(rest, ":streamGenerateContent")
+		return model, true, model != ""
+	case strings.HasSuffix(rest, ":generateContent"):
+		model = strings.TrimSuffix(rest, ":generateContent")
+		return model, false, model != ""
+	default:
+		return "", false, false
+	}
+}
+
 func mapAliasPath(pathname string) string {
 	if alias, ok := pathAliases[pathname]; ok {
 		return alias

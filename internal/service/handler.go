@@ -29,48 +29,101 @@ func NewHandler(logger *log.Logger, cfg *config.AppConfig, client *chatjimmy.Cli
 
 // ServeHTTP routes requests through path normalization, aliases, and handlers.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	path := resolvePath(r.URL.Path)
+	sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+
 	if h.cfg != nil && h.cfg.Verbose {
-		h.logger.Printf("%s %s", r.Method, resolvePath(r.URL.Path))
+		h.logger.Printf("%s %s", r.Method, path)
 	}
 
 	if r.Method == http.MethodOptions {
-		h.writeCORS(w)
-		w.WriteHeader(http.StatusNoContent)
+		h.writeCORS(sw)
+		sw.WriteHeader(http.StatusNoContent)
+		h.logRequest(r.Method, path, sw.status, start)
 		return
 	}
 
-	path := resolvePath(r.URL.Path)
-	switch path {
-	case "/", "/health":
+	switch {
+	case path == "/" || path == "/health":
 		if r.Method != http.MethodGet {
-			h.writeOpenAIError(w, "Method not allowed", "invalid_request_error", "method_not_allowed", http.StatusMethodNotAllowed)
+			h.writeOpenAIError(sw, "Method not allowed", "invalid_request_error", "method_not_allowed", http.StatusMethodNotAllowed)
+			h.logRequest(r.Method, path, sw.status, start)
 			return
 		}
-		h.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	case "/v1/models":
+		h.writeJSON(sw, http.StatusOK, map[string]string{"status": "ok"})
+	case path == "/v1/models":
 		if r.Method != http.MethodGet {
-			h.writeOpenAIError(w, "Method not allowed", "invalid_request_error", "method_not_allowed", http.StatusMethodNotAllowed)
+			h.writeOpenAIError(sw, "Method not allowed", "invalid_request_error", "method_not_allowed", http.StatusMethodNotAllowed)
+			h.logRequest(r.Method, path, sw.status, start)
 			return
 		}
-		h.handleModels(w)
-	case "/v1/chat/completions":
+		h.handleModels(sw)
+	case path == "/v1/chat/completions":
 		if r.Method != http.MethodPost {
-			h.writeOpenAIError(w, "Method not allowed", "invalid_request_error", "method_not_allowed", http.StatusMethodNotAllowed)
+			h.writeOpenAIError(sw, "Method not allowed", "invalid_request_error", "method_not_allowed", http.StatusMethodNotAllowed)
+			h.logRequest(r.Method, path, sw.status, start)
 			return
 		}
 		if !h.authorize(r) {
-			h.writeOpenAIError(w, "Invalid API key", "invalid_api_key", "invalid_api_key", http.StatusUnauthorized)
+			h.writeOpenAIError(sw, "Invalid API key", "invalid_api_key", "invalid_api_key", http.StatusUnauthorized)
+			h.logRequest(r.Method, path, sw.status, start)
 			return
 		}
-		h.handleChatCompletions(w, r)
+		h.handleChatCompletions(sw, r)
+	case path == "/api/chat":
+		if r.Method != http.MethodPost {
+			h.writeOpenAIError(sw, "Method not allowed", "invalid_request_error", "method_not_allowed", http.StatusMethodNotAllowed)
+			h.logRequest(r.Method, path, sw.status, start)
+			return
+		}
+		if !h.authorize(r) {
+			h.writeOpenAIError(sw, "Invalid API key", "invalid_api_key", "invalid_api_key", http.StatusUnauthorized)
+			h.logRequest(r.Method, path, sw.status, start)
+			return
+		}
+		h.handleNativeChat(sw, r)
+	case path == "/v1/messages":
+		if r.Method != http.MethodPost {
+			h.writeAnthropicError(sw, "Method not allowed", "invalid_request_error", http.StatusMethodNotAllowed)
+			h.logRequest(r.Method, path, sw.status, start)
+			return
+		}
+		if !h.authorize(r) {
+			h.writeAnthropicError(sw, "Invalid API key", "authentication_error", http.StatusUnauthorized)
+			h.logRequest(r.Method, path, sw.status, start)
+			return
+		}
+		h.handleAnthropicMessages(sw, r)
 	default:
-		h.writeOpenAIError(w, "Not found", "invalid_request_error", "not_found", http.StatusNotFound)
+		if model, stream, ok := parseGeminiPath(path); ok {
+			if r.Method != http.MethodPost {
+				h.writeGeminiError(sw, "Method not allowed", http.StatusMethodNotAllowed)
+				h.logRequest(r.Method, path, sw.status, start)
+				return
+			}
+			if !h.authorize(r) {
+				h.writeGeminiError(sw, "Invalid API key", http.StatusUnauthorized)
+				h.logRequest(r.Method, path, sw.status, start)
+				return
+			}
+			h.handleGeminiGenerate(sw, r, model, stream)
+			h.logRequest(r.Method, path, sw.status, start)
+			return
+		}
+		h.writeOpenAIError(sw, "Not found", "invalid_request_error", "not_found", http.StatusNotFound)
 	}
+	h.logRequest(r.Method, path, sw.status, start)
 }
 
 func (h *Handler) handleModels(w http.ResponseWriter) {
 	now := time.Now().Unix()
-	models := chatjimmy.ListedModels()
+	defaultModel := h.defaultModel()
+	extras := []string(nil)
+	if h.cfg != nil {
+		extras = chatjimmy.SplitCSV(h.cfg.ChatJimmyModels)
+	}
+	models := chatjimmy.ListModels(defaultModel, extras)
 	data := make([]map[string]any, 0, len(models))
 	for _, id := range models {
 		data = append(data, map[string]any{
@@ -106,22 +159,54 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) authorize(r *http.Request) bool {
+	if h.cfg == nil {
+		return true
+	}
 	expected := strings.TrimSpace(h.cfg.APIKey)
 	if expected == "" {
 		return true
 	}
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") {
-		return false
+	candidates := []string{
+		bearerToken(r.Header.Get("Authorization")),
+		strings.TrimSpace(r.Header.Get("x-api-key")),
+		strings.TrimSpace(r.Header.Get("X-Api-Key")),
+		strings.TrimSpace(r.Header.Get("x-goog-api-key")),
+		strings.TrimSpace(r.Header.Get("X-Goog-Api-Key")),
 	}
-	actual := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
-	return actual != "" && actual == expected
+	for _, actual := range candidates {
+		if actual != "" && actual == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func bearerToken(auth string) string {
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+}
+
+func (h *Handler) allowedOrigin() string {
+	if h.cfg == nil {
+		return config.DefaultAllowedOrigin
+	}
+	origin := strings.TrimSpace(h.cfg.AllowedOrigin)
+	if origin == "" {
+		return config.DefaultAllowedOrigin
+	}
+	return origin
 }
 
 func (h *Handler) writeCORS(w http.ResponseWriter) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	origin := h.allowedOrigin()
+	w.Header().Set("Access-Control-Allow-Origin", origin)
+	if origin != "*" {
+		w.Header().Set("Vary", "Origin")
+	}
 	w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Authorization,Content-Type")
+	w.Header().Set("Access-Control-Allow-Headers", "Authorization,Content-Type,x-api-key,x-goog-api-key,anthropic-version")
 	w.Header().Set("Access-Control-Max-Age", "86400")
 }
 
@@ -132,9 +217,24 @@ func (h *Handler) writeJSON(w http.ResponseWriter, status int, data any) {
 	_ = json.NewEncoder(w).Encode(data)
 }
 
+func (h *Handler) writeRaw(w http.ResponseWriter, status int, contentType string, body []byte) {
+	h.writeCORS(w)
+	w.Header().Set("Content-Type", contentType)
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
+}
+
 func (h *Handler) writeOpenAIError(w http.ResponseWriter, message, typ, code string, status int) {
 	body, _ := chatjimmy.NewOpenAIError(message, typ, code, status)
 	h.writeJSON(w, status, body)
+}
+
+func (h *Handler) writeAnthropicError(w http.ResponseWriter, message, typ string, status int) {
+	h.writeJSON(w, status, chatjimmy.NewAnthropicError(message, typ))
+}
+
+func (h *Handler) writeGeminiError(w http.ResponseWriter, message string, status int) {
+	h.writeJSON(w, status, chatjimmy.NewGeminiError(message, status))
 }
 
 func (h *Handler) writeSSE(w http.ResponseWriter, payload []byte) {
@@ -144,6 +244,23 @@ func (h *Handler) writeSSE(w http.ResponseWriter, payload []byte) {
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(payload)
+}
+
+func (h *Handler) logRequest(method, path string, status int, start time.Time) {
+	if h.cfg == nil || !h.cfg.Verbose || h.logger == nil {
+		return
+	}
+	h.logger.Printf("%s %s status=%d duration=%s", method, path, status, time.Since(start).Round(time.Millisecond))
+}
+
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusWriter) WriteHeader(status int) {
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
 }
 
 type proxyError struct {
