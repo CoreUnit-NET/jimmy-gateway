@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -17,6 +18,10 @@ type Client struct {
 }
 
 func (c *Client) Chat(ctx context.Context, payload UpstreamPayload) (string, error) {
+	return c.chat(ctx, payload, true)
+}
+
+func (c *Client) chat(ctx context.Context, payload UpstreamPayload, retryEmpty bool) (string, error) {
 	if c == nil {
 		return "", fmt.Errorf("client is nil")
 	}
@@ -62,7 +67,11 @@ func (c *Client) Chat(ctx context.Context, payload UpstreamPayload) (string, err
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("upstream returned %d: %s", resp.StatusCode, truncate(string(raw), 500))
 	}
-	return string(raw), nil
+	text := string(raw)
+	if retryEmpty && strings.TrimSpace(text) == "" {
+		return c.chat(ctx, payload, false)
+	}
+	return text, nil
 }
 
 func truncate(s string, max int) string {
