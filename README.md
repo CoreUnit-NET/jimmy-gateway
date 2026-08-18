@@ -183,12 +183,25 @@ This is prompt/response translation only. Do not expect native tool APIs from Ch
 
 `GET /v1/models` lists `llama3.1-8B` first, then aliases. Unknown client model names are forwarded as `selectedModel` unchanged.
 
-| Client id                                                                                                                                                              | Upstream      |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
-| `llama3.1-8B`                                                                                                                                                          | `llama3.1-8B` |
-| `gpt-4o`, `gpt-4o-mini`, `gpt-4-turbo`, `gpt-4`, `gpt-3.5-turbo`, `gpt-3.5-turbo-instruct`                                                                             | `llama3.1-8B` |
-| `claude-opus-4-5-20251101`, `claude-sonnet-4-5-20250929`, `claude-3-5-haiku-20241022`, `claude-3-opus-20240229`, `claude-3-sonnet-20240229`, `claude-3-haiku-20240307` | `llama3.1-8B` |
-| `gemini-1.5-pro`, `gemini-1.5-flash`, `gemini-1.0-pro`, `gemini-1.0-ultra`                                                                                             | `llama3.1-8B` |
+| Provider       | Client id                    | Upstream      |
+| -------------- | ---------------------------- | ------------- |
+| ChatJimmy      | `llama3.1-8B`                | `llama3.1-8B` |
+| OpenAI         | `gpt-4o`                     | `llama3.1-8B` |
+| OpenAI         | `gpt-4o-mini`                | `llama3.1-8B` |
+| OpenAI         | `gpt-4-turbo`                | `llama3.1-8B` |
+| OpenAI         | `gpt-4`                      | `llama3.1-8B` |
+| OpenAI         | `gpt-3.5-turbo`              | `llama3.1-8B` |
+| OpenAI         | `gpt-3.5-turbo-instruct`     | `llama3.1-8B` |
+| Anthropic      | `claude-opus-4-5-20251101`   | `llama3.1-8B` |
+| Anthropic      | `claude-sonnet-4-5-20250929` | `llama3.1-8B` |
+| Anthropic      | `claude-3-5-haiku-20241022`  | `llama3.1-8B` |
+| Anthropic      | `claude-3-opus-20240229`     | `llama3.1-8B` |
+| Anthropic      | `claude-3-sonnet-20240229`   | `llama3.1-8B` |
+| Anthropic      | `claude-3-haiku-20240307`    | `llama3.1-8B` |
+| Google Gemini  | `gemini-1.5-pro`             | `llama3.1-8B` |
+| Google Gemini  | `gemini-1.5-flash`           | `llama3.1-8B` |
+| Google Gemini  | `gemini-1.0-pro`             | `llama3.1-8B` |
+| Google Gemini  | `gemini-1.0-ultra`           | `llama3.1-8B` |
 
 ### OpenCode setup
 
