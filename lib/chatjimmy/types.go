@@ -18,11 +18,29 @@ var FilteredTools = map[string]struct{}{
 }
 
 type ChatRequest struct {
-	Model      string          `json:"model"`
-	Messages   []Message       `json:"messages"`
-	Stream     bool            `json:"stream"`
-	Tools      []Tool          `json:"tools,omitempty"`
-	ToolChoice json.RawMessage `json:"tool_choice,omitempty"`
+	Model       string          `json:"model"`
+	Messages    []Message       `json:"messages"`
+	Stream      bool            `json:"stream"`
+	Tools       []Tool          `json:"tools,omitempty"`
+	ToolChoice  json.RawMessage `json:"tool_choice,omitempty"`
+	Temperature *float64        `json:"temperature,omitempty"`
+	TopP        *float64        `json:"top_p,omitempty"`
+	TopK        *int            `json:"top_k,omitempty"`
+	TopKCamel   *int            `json:"topK,omitempty"`
+	MaxTokens   *int            `json:"max_tokens,omitempty"`
+	Stop        json.RawMessage `json:"stop,omitempty"`
+	ChatOptions *NativeOptions  `json:"chatOptions,omitempty"`
+}
+
+type NativeOptions struct {
+	SelectedModel string   `json:"selectedModel"`
+	SystemPrompt  string   `json:"systemPrompt"`
+	TopK          int      `json:"topK"`
+	Temperature   *float64 `json:"temperature,omitempty"`
+	TopP          *float64 `json:"topP,omitempty"`
+	MaxTokens     *int     `json:"maxTokens,omitempty"`
+	StopSequences []string `json:"stopSequences,omitempty"`
+	Stream        bool     `json:"stream,omitempty"`
 }
 
 type Message struct {
@@ -59,7 +77,7 @@ type ToolCallFunction struct {
 type UpstreamPayload struct {
 	Messages    []UpstreamMessage `json:"messages"`
 	ChatOptions UpstreamOptions   `json:"chatOptions"`
-	Attachment  *struct{}         `json:"attachment"`
+	Attachment  *Attachment       `json:"attachment"`
 }
 
 type UpstreamMessage struct {
@@ -68,9 +86,21 @@ type UpstreamMessage struct {
 }
 
 type UpstreamOptions struct {
-	SelectedModel string `json:"selectedModel"`
-	SystemPrompt  string `json:"systemPrompt"`
-	TopK          int    `json:"topK"`
+	SelectedModel string   `json:"selectedModel"`
+	SystemPrompt  string   `json:"systemPrompt"`
+	TopK          int      `json:"topK"`
+	Temperature   *float64 `json:"temperature,omitempty"`
+	TopP          *float64 `json:"topP,omitempty"`
+	MaxTokens     *int     `json:"maxTokens,omitempty"`
+	StopSequences []string `json:"stopSequences,omitempty"`
+	Stream        bool     `json:"stream,omitempty"`
+}
+
+type Attachment struct {
+	Type     string `json:"type"`
+	Data     string `json:"data"`
+	MimeType string `json:"mimeType"`
+	Filename string `json:"filename,omitempty"`
 }
 
 type Usage struct {
@@ -80,12 +110,13 @@ type Usage struct {
 }
 
 type Completion struct {
-	ID      string             `json:"id"`
-	Object  string             `json:"object"`
-	Created int64              `json:"created"`
-	Model   string             `json:"model"`
-	Choices []CompletionChoice `json:"choices"`
-	Usage   Usage              `json:"usage"`
+	ID             string             `json:"id"`
+	Object         string             `json:"object"`
+	Created        int64              `json:"created"`
+	Model          string             `json:"model"`
+	Choices        []CompletionChoice `json:"choices"`
+	Usage          Usage              `json:"usage"`
+	ChatJimmyStats any                `json:"chatjimmy_stats,omitempty"`
 }
 
 type CompletionChoice struct {
