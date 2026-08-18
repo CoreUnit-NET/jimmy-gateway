@@ -1,0 +1,41 @@
+name: Go binary release
+
+on:
+  release:
+    types: [created, edited]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to upload binaries to
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  releases-matrix:
+    name: Release Go Binary
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: ["linux", "darwin", "windows"]
+        goarch: ["amd64", "386", "arm64"]
+        exclude:
+          - goarch: "386"
+            goos: "darwin"
+          - goarch: "arm64"
+            goos: "windows"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: wangyoucao577/go-release-action@v1
+        with:
+          binary_name: ${{ github.event.repository.name }}
+          goversion: go.mod
+          extra_files: LICENSE README.md CONTRIBUTING.md
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          release_tag: ${{ github.event.inputs.release_tag || github.ref_name }}
+          ldflags: "-X main.Version=${{ github.event.inputs.release_tag || github.ref_name }} -X main.Commit=${{ github.sha }}"
