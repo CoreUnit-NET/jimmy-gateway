@@ -11,6 +11,8 @@ func clearConfigEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
 		"VERBOSE", "HOST", "PORT", "API_KEY", "OPENAI_API_KEY",
+		"ALLOWED_ORIGIN", "CHATJIMMY_URL", "CHATJIMMY_TIMEOUT",
+		"CHATJIMMY_API_KEY", "CHATJIMMY_MODEL", "CHATJIMMY_MODELS",
 	} {
 		t.Setenv(key, "")
 	}
@@ -41,6 +43,18 @@ func TestParseConfigDefaults(t *testing.T) {
 	}
 	if cfg.APIKey != "" {
 		t.Fatalf("APIKey = %q, want empty", cfg.APIKey)
+	}
+	if cfg.AllowedOrigin != DefaultAllowedOrigin {
+		t.Fatalf("AllowedOrigin = %q, want %q", cfg.AllowedOrigin, DefaultAllowedOrigin)
+	}
+	if cfg.ChatJimmyURL != DefaultChatJimmyURL {
+		t.Fatalf("ChatJimmyURL = %q, want %q", cfg.ChatJimmyURL, DefaultChatJimmyURL)
+	}
+	if cfg.ChatJimmyTimeout != DefaultChatJimmyTimeout {
+		t.Fatalf("ChatJimmyTimeout = %d, want %d", cfg.ChatJimmyTimeout, DefaultChatJimmyTimeout)
+	}
+	if cfg.ChatJimmyAPIKey != "" || cfg.ChatJimmyModel != "" || cfg.ChatJimmyModels != "" {
+		t.Fatalf("unexpected chatjimmy extras: key=%q model=%q models=%q", cfg.ChatJimmyAPIKey, cfg.ChatJimmyModel, cfg.ChatJimmyModels)
 	}
 }
 
@@ -94,6 +108,51 @@ func TestParseConfigFlagsOverrideEnv(t *testing.T) {
 	}
 	if cfg.APIKey != "flag-key" {
 		t.Fatalf("APIKey = %q, want flag", cfg.APIKey)
+	}
+}
+
+func TestParseConfigChatJimmyEnvAndFlags(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	clearConfigEnv(t)
+
+	t.Setenv("ALLOWED_ORIGIN", "https://env.example")
+	t.Setenv("CHATJIMMY_URL", "https://env.example/api/chat")
+	t.Setenv("CHATJIMMY_TIMEOUT", "90")
+	t.Setenv("CHATJIMMY_API_KEY", "env-up")
+	t.Setenv("CHATJIMMY_MODEL", "env-model")
+	t.Setenv("CHATJIMMY_MODELS", "extra-a,extra-b")
+
+	os.Args = []string{
+		"jimmy-gateway", "serve",
+		"--allowed-origin", "https://flag.example",
+		"--chatjimmy-url", "https://flag.example/api/chat",
+		"--chatjimmy-timeout", "45",
+		"--chatjimmy-api-key", "flag-up",
+		"--chatjimmy-model", "flag-model",
+		"--chatjimmy-models", "flag-extra",
+	}
+	cfg, err := ParseConfig("Demo", "demo")
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.AllowedOrigin != "https://flag.example" {
+		t.Fatalf("AllowedOrigin = %q, want flag", cfg.AllowedOrigin)
+	}
+	if cfg.ChatJimmyURL != "https://flag.example/api/chat" {
+		t.Fatalf("ChatJimmyURL = %q, want flag", cfg.ChatJimmyURL)
+	}
+	if cfg.ChatJimmyTimeout != 45 {
+		t.Fatalf("ChatJimmyTimeout = %d, want 45", cfg.ChatJimmyTimeout)
+	}
+	if cfg.ChatJimmyAPIKey != "flag-up" {
+		t.Fatalf("ChatJimmyAPIKey = %q, want flag", cfg.ChatJimmyAPIKey)
+	}
+	if cfg.ChatJimmyModel != "flag-model" {
+		t.Fatalf("ChatJimmyModel = %q, want flag", cfg.ChatJimmyModel)
+	}
+	if cfg.ChatJimmyModels != "flag-extra" {
+		t.Fatalf("ChatJimmyModels = %q, want flag", cfg.ChatJimmyModels)
 	}
 }
 
@@ -200,6 +259,84 @@ func TestAppConfigValidate(t *testing.T) {
 		cfg.Host = "   "
 		if err := cfg.Validate(); err == nil {
 			t.Fatal("expected error for empty host")
+		}
+	})
+
+	t.Run("invalid chatjimmy url", func(t *testing.T) {
+		cfg := defaultAppConfig()
+		cfg.ChatJimmyURL = "not-a-url"
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("expected error for invalid url")
+		}
+	})
+
+	t.Run("empty chatjimmy url", func(t *testing.T) {
+		cfg := defaultAppConfig()
+		cfg.ChatJimmyURL = "  "
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("expected error for empty url")
+		}
+	})
+
+	t.Run("timeout bounds", func(t *testing.T) {
+		cfg := defaultAppConfig()
+		cfg.ChatJimmyTimeout = 0
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("expected error for timeout 0")
+		}
+		cfg = defaultAppConfig()
+		cfg.ChatJimmyTimeout = 301
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("expected error for timeout 301")
+		}
+	})
+
+	t.Run("empty origin becomes default", func(t *testing.T) {
+		cfg := defaultAppConfig()
+		cfg.AllowedOrigin = "  "
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate: %v", err)
+		}
+		if cfg.AllowedOrigin != DefaultAllowedOrigin {
+			t.Fatalf("AllowedOrigin = %q, want %q", cfg.AllowedOrigin, DefaultAllowedOrigin)
+		}
+	})
+
+	t.Run("comma origin rejected", func(t *testing.T) {
+		cfg := defaultAppConfig()
+		cfg.AllowedOrigin = "https://a.example,https://b.example"
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("expected error for comma origin")
+		}
+	})
+
+	t.Run("whitespace origin rejected", func(t *testing.T) {
+		cfg := defaultAppConfig()
+		cfg.AllowedOrigin = "https://a.example https://b.example"
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("expected error for whitespace origin")
+		}
+	})
+
+	t.Run("trailing slash trimmed", func(t *testing.T) {
+		cfg := defaultAppConfig()
+		cfg.AllowedOrigin = "https://app.example/"
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate: %v", err)
+		}
+		if cfg.AllowedOrigin != "https://app.example" {
+			t.Fatalf("AllowedOrigin = %q", cfg.AllowedOrigin)
+		}
+	})
+
+	t.Run("star origin kept", func(t *testing.T) {
+		cfg := defaultAppConfig()
+		cfg.AllowedOrigin = "*"
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate: %v", err)
+		}
+		if cfg.AllowedOrigin != "*" {
+			t.Fatalf("AllowedOrigin = %q", cfg.AllowedOrigin)
 		}
 	})
 }
