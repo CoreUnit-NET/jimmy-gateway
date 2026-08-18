@@ -48,6 +48,34 @@ func TestListedModelsOrder(t *testing.T) {
 	}
 }
 
+func TestListModelsExtras(t *testing.T) {
+	got := ListModels("custom-model", []string{" extra-a ", "", "gpt-4o", "extra-b"})
+	if got[0] != "custom-model" {
+		t.Fatalf("first = %q, want custom-model", got[0])
+	}
+	if slices.Contains(got, "extra-a") == false || slices.Contains(got, "extra-b") == false {
+		t.Fatalf("missing extras: %#v", got)
+	}
+	count := 0
+	for _, id := range got {
+		if id == "gpt-4o" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("gpt-4o count = %d, want 1 (no dup extras)", count)
+	}
+}
+
+func TestSplitCSV(t *testing.T) {
+	if got := SplitCSV(" a, b,,c "); !slices.Equal(got, []string{"a", "b", "c"}) {
+		t.Fatalf("SplitCSV = %#v", got)
+	}
+	if got := SplitCSV("  , "); got != nil {
+		t.Fatalf("SplitCSV blank = %#v, want nil", got)
+	}
+}
+
 func TestMapModel(t *testing.T) {
 	tests := []struct {
 		in   string

@@ -43,6 +43,9 @@ func FormatToolsForPrompt(tools []Tool, toolChoice json.RawMessage) string {
 	if len(tools) == 0 {
 		return ""
 	}
+	if parseToolChoice(toolChoice) == "none" {
+		return ""
+	}
 
 	lines := []string{
 		"",
@@ -58,8 +61,6 @@ func FormatToolsForPrompt(tools []Tool, toolChoice json.RawMessage) string {
 	}
 
 	switch parseToolChoice(toolChoice) {
-	case "none":
-		lines = append(lines, "Do NOT use tools for this request.", "")
 	case "required":
 		lines = append(lines, "You MUST call at least one tool.", "")
 	default:

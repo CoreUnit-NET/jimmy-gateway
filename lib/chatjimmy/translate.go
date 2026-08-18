@@ -3,8 +3,12 @@ package chatjimmy
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 )
+
+var toolsJSONBlock = regexp.MustCompile(`(?s)\n?<tools>.*?</tools>`)
 
 type TranslateOptions struct {
 	DefaultModel string
@@ -15,6 +19,8 @@ type TranslateResult struct {
 	Payload         UpstreamPayload
 	Tools           []Tool
 	SystemTruncated bool
+	ToolsCompacted  bool
+	SkipToolParse   bool
 }
 
 func TranslateRequest(req ChatRequest, opts TranslateOptions) (TranslateResult, error) {
@@ -85,7 +91,7 @@ func TranslateRequest(req ChatRequest, opts TranslateOptions) (TranslateResult, 
 			result := map[string]any{
 				"name":         toolName,
 				"tool_call_id": msg.ToolCallID,
-				"content":      content,
+				"content":      capToolResult(content),
 			}
 			block, _ := json.MarshalIndent(result, "", "  ")
 			chatMessages = append(chatMessages, UpstreamMessage{
@@ -105,13 +111,22 @@ func TranslateRequest(req ChatRequest, opts TranslateOptions) (TranslateResult, 
 	if systemPrompt == "" && req.ChatOptions != nil {
 		systemPrompt = strings.TrimSpace(req.ChatOptions.SystemPrompt)
 	}
-	if len(tools) > 0 {
+	skipToolParse := parseToolChoice(req.ToolChoice) == "none"
+	if len(tools) > 0 && !skipToolParse {
 		systemPrompt += FormatToolsForPrompt(tools, req.ToolChoice)
 	}
 
 	truncated := false
+	compacted := false
 	if len(systemPrompt) > MaxSystemPrompt {
-		systemPrompt = systemPrompt[:MaxSystemPrompt]
+		stripped := stripToolsJSON(systemPrompt)
+		if stripped != systemPrompt {
+			systemPrompt = stripped
+			compacted = true
+		}
+	}
+	if len(systemPrompt) > MaxSystemPrompt {
+		systemPrompt = limitBytes(systemPrompt, MaxSystemPrompt)
 		truncated = true
 	}
 
@@ -138,7 +153,31 @@ func TranslateRequest(req ChatRequest, opts TranslateOptions) (TranslateResult, 
 		},
 		Tools:           tools,
 		SystemTruncated: truncated,
+		ToolsCompacted:  compacted,
+		SkipToolParse:   skipToolParse,
 	}, nil
+}
+
+func stripToolsJSON(prompt string) string {
+	return strings.TrimSpace(toolsJSONBlock.ReplaceAllString(prompt, ""))
+}
+
+func capToolResult(content string) string {
+	if len(content) <= MaxToolResultChars {
+		return content
+	}
+	return limitBytes(content, MaxToolResultChars) + "\n...[truncated]"
+}
+
+func limitBytes(s string, max int) string {
+	if max < 0 || len(s) <= max {
+		return s
+	}
+	s = s[:max]
+	for len(s) > 0 && !utf8.ValidString(s) {
+		s = s[:len(s)-1]
+	}
+	return s
 }
 
 func resolveTopK(req ChatRequest) int {

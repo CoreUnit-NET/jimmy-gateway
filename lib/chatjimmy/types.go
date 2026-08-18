@@ -7,6 +7,7 @@ const (
 	DefaultModel       = "llama3.1-8B"
 	DefaultTopK        = 8
 	MaxSystemPrompt    = 28000
+	MaxToolResultChars = 8000
 )
 
 var FilteredTools = map[string]struct{}{

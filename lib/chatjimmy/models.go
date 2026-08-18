@@ -38,13 +38,62 @@ func MapModel(name string) string {
 }
 
 func ListedModels() []string {
+	return ListModels("", nil)
+}
+
+func ListModels(defaultModel string, extras []string) []string {
+	defaultModel = strings.TrimSpace(defaultModel)
+	if defaultModel == "" {
+		defaultModel = DefaultModel
+	}
+
+	seen := map[string]struct{}{defaultModel: {}}
+	out := []string{defaultModel}
+
 	aliases := make([]string, 0, len(ModelAliases))
 	for alias := range ModelAliases {
-		if alias == DefaultModel {
+		if alias == defaultModel {
 			continue
 		}
 		aliases = append(aliases, alias)
 	}
 	sort.Strings(aliases)
-	return append([]string{DefaultModel}, aliases...)
+	for _, alias := range aliases {
+		if _, ok := seen[alias]; ok {
+			continue
+		}
+		seen[alias] = struct{}{}
+		out = append(out, alias)
+	}
+	for _, extra := range extras {
+		extra = strings.TrimSpace(extra)
+		if extra == "" {
+			continue
+		}
+		if _, ok := seen[extra]; ok {
+			continue
+		}
+		seen[extra] = struct{}{}
+		out = append(out, extra)
+	}
+	return out
+}
+
+func SplitCSV(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		out = append(out, part)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

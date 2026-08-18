@@ -27,11 +27,8 @@ func TestFormatToolsForPromptIncludesSchemas(t *testing.T) {
 func TestFormatToolsForPromptToolChoiceNone(t *testing.T) {
 	tools := []Tool{{Type: "function", Function: ToolFunction{Name: "read"}}}
 	prompt := FormatToolsForPrompt(tools, json.RawMessage(`"none"`))
-	if !strings.Contains(prompt, "Do NOT use tools") {
-		t.Fatalf("prompt = %q", prompt)
-	}
-	if !strings.Contains(prompt, "# Tools") || !strings.Contains(prompt, "- read(") {
-		t.Fatalf("expected schemas still injected: %q", prompt)
+	if prompt != "" {
+		t.Fatalf("prompt = %q, want empty (no schema inject)", prompt)
 	}
 }
 

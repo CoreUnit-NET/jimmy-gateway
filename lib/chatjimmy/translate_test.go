@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestFilterTools(t *testing.T) {
@@ -35,6 +36,26 @@ func TestTranslateRequestSystemAndUser(t *testing.T) {
 	}
 	if len(out.Payload.Messages) != 1 || out.Payload.Messages[0].Role != "user" {
 		t.Fatalf("messages = %+v", out.Payload.Messages)
+	}
+}
+
+func TestLimitBytesUTF8Safe(t *testing.T) {
+	// "é" is 2 bytes (c3 a9). A 4-byte cut of "abcé" would otherwise split it.
+	got := limitBytes("abcé", 4)
+	if !utf8.ValidString(got) {
+		t.Fatalf("invalid utf8: %q", got)
+	}
+	if got != "abc" {
+		t.Fatalf("got %q, want abc", got)
+	}
+	if got := limitBytes("abcd", 4); got != "abcd" {
+		t.Fatalf("exact max = %q", got)
+	}
+	if got := limitBytes("ab", 4); got != "ab" {
+		t.Fatalf("short = %q", got)
+	}
+	if got := limitBytes("é", 1); got != "" {
+		t.Fatalf("split rune = %q, want empty", got)
 	}
 }
 
@@ -175,7 +196,7 @@ func TestTranslateRequestMapsAliasToUpstream(t *testing.T) {
 	}
 }
 
-func TestTranslateRequestToolChoiceNoneInjectsSchemas(t *testing.T) {
+func TestTranslateRequestToolChoiceNoneSkipsSchemas(t *testing.T) {
 	req := ChatRequest{
 		Messages:   []Message{{Role: "user", Content: json.RawMessage(`"hi"`)}},
 		Tools:      []Tool{{Type: "function", Function: ToolFunction{Name: "read"}}},
@@ -185,15 +206,62 @@ func TestTranslateRequestToolChoiceNoneInjectsSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TranslateRequest: %v", err)
 	}
+	if !out.SkipToolParse {
+		t.Fatal("expected SkipToolParse true")
+	}
 	prompt := out.Payload.ChatOptions.SystemPrompt
-	if !strings.Contains(prompt, "# Tools") {
-		t.Fatalf("system prompt missing tools: %q", prompt)
+	if strings.Contains(prompt, "# Tools") || strings.Contains(prompt, "<tools>") {
+		t.Fatalf("system prompt should omit tools: %q", prompt)
 	}
-	if !strings.Contains(prompt, "Do NOT use tools") {
-		t.Fatalf("system prompt missing none instruction: %q", prompt)
+}
+
+func TestTranslateRequestCompactsToolsJSONBeforeTruncate(t *testing.T) {
+	long := strings.Repeat("a", MaxSystemPrompt-20)
+	req := ChatRequest{
+		Messages: []Message{
+			{Role: "system", Content: mustJSON(long)},
+			{Role: "user", Content: json.RawMessage(`"hi"`)},
+		},
+		Tools: []Tool{{
+			Type: "function",
+			Function: ToolFunction{
+				Name:        "read",
+				Description: "Read a file.",
+				Parameters:  json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`),
+			},
+		}},
 	}
-	if !strings.Contains(prompt, "read") {
-		t.Fatalf("system prompt missing read schema: %q", prompt)
+	out, err := TranslateRequest(req, TranslateOptions{})
+	if err != nil {
+		t.Fatalf("TranslateRequest: %v", err)
+	}
+	if !out.ToolsCompacted {
+		t.Fatal("expected ToolsCompacted true")
+	}
+	prompt := out.Payload.ChatOptions.SystemPrompt
+	if strings.Contains(prompt, "<tools>") {
+		t.Fatalf("compacted prompt still has tools JSON: %q", prompt[:120])
+	}
+}
+
+func TestTranslateRequestCapsToolResult(t *testing.T) {
+	huge := strings.Repeat("x", MaxToolResultChars+50)
+	req := ChatRequest{
+		Messages: []Message{
+			{Role: "tool", Name: "read", ToolCallID: "call_1", Content: mustJSON(huge)},
+			{Role: "user", Content: json.RawMessage(`"thanks"`)},
+		},
+	}
+	out, err := TranslateRequest(req, TranslateOptions{})
+	if err != nil {
+		t.Fatalf("TranslateRequest: %v", err)
+	}
+	got := out.Payload.Messages[0].Content
+	if !strings.Contains(got, "...[truncated]") {
+		t.Fatalf("content missing truncate marker: %q", got[len(got)-40:])
+	}
+	if strings.Count(got, "x") > MaxToolResultChars {
+		t.Fatalf("tool result still too long: %d", strings.Count(got, "x"))
 	}
 }
 
