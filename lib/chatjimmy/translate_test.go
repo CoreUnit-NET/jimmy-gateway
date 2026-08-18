@@ -158,6 +158,45 @@ func TestTranslateRequestToolResultMessage(t *testing.T) {
 	}
 }
 
+func TestTranslateRequestMapsAliasToUpstream(t *testing.T) {
+	req := ChatRequest{
+		Model:    "gpt-4o",
+		Messages: []Message{{Role: "user", Content: json.RawMessage(`"hi"`)}},
+	}
+	out, err := TranslateRequest(req, TranslateOptions{})
+	if err != nil {
+		t.Fatalf("TranslateRequest: %v", err)
+	}
+	if out.Model != "gpt-4o" {
+		t.Fatalf("response model = %q, want gpt-4o", out.Model)
+	}
+	if out.Payload.ChatOptions.SelectedModel != DefaultModel {
+		t.Fatalf("selectedModel = %q, want %q", out.Payload.ChatOptions.SelectedModel, DefaultModel)
+	}
+}
+
+func TestTranslateRequestToolChoiceNoneInjectsSchemas(t *testing.T) {
+	req := ChatRequest{
+		Messages:   []Message{{Role: "user", Content: json.RawMessage(`"hi"`)}},
+		Tools:      []Tool{{Type: "function", Function: ToolFunction{Name: "read"}}},
+		ToolChoice: json.RawMessage(`"none"`),
+	}
+	out, err := TranslateRequest(req, TranslateOptions{})
+	if err != nil {
+		t.Fatalf("TranslateRequest: %v", err)
+	}
+	prompt := out.Payload.ChatOptions.SystemPrompt
+	if !strings.Contains(prompt, "# Tools") {
+		t.Fatalf("system prompt missing tools: %q", prompt)
+	}
+	if !strings.Contains(prompt, "Do NOT use tools") {
+		t.Fatalf("system prompt missing none instruction: %q", prompt)
+	}
+	if !strings.Contains(prompt, "read") {
+		t.Fatalf("system prompt missing read schema: %q", prompt)
+	}
+}
+
 func TestTranslateRequestInjectToolsIntoSystemPrompt(t *testing.T) {
 	req := ChatRequest{
 		Messages: []Message{

@@ -30,6 +30,9 @@ func TestFormatToolsForPromptToolChoiceNone(t *testing.T) {
 	if !strings.Contains(prompt, "Do NOT use tools") {
 		t.Fatalf("prompt = %q", prompt)
 	}
+	if !strings.Contains(prompt, "# Tools") || !strings.Contains(prompt, "- read(") {
+		t.Fatalf("expected schemas still injected: %q", prompt)
+	}
 }
 
 func TestFormatToolsForPromptRequiredToolName(t *testing.T) {
