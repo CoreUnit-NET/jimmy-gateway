@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -24,12 +25,7 @@ func NewToolCallID() string {
 	return "call_" + hex.EncodeToString(buf)
 }
 
-type BuildOptions struct {
-	Model string
-	Tools []Tool
-}
-
-func BuildCompletion(model, upstreamText string, usage Usage, tools []Tool) Completion {
+func BuildCompletion(model, upstreamText string, usage Usage, tools []Tool, stats map[string]any) Completion {
 	text, toolCalls := ParseToolCalls(upstreamText, tools, NewToolCallID)
 	created := time.Now().Unix()
 
@@ -42,7 +38,13 @@ func BuildCompletion(model, upstreamText string, usage Usage, tools []Tool) Comp
 		}
 		msg.ToolCalls = toolCalls
 	} else {
-		msg.Content = &upstreamText
+		msg.Content = &text
+		finishReason = finishReasonFromStats(stats)
+	}
+
+	var statsOut any
+	if len(stats) > 0 {
+		statsOut = stats
 	}
 
 	return Completion{
@@ -55,8 +57,26 @@ func BuildCompletion(model, upstreamText string, usage Usage, tools []Tool) Comp
 			Message:      msg,
 			FinishReason: finishReason,
 		}},
-		Usage: usage,
+		Usage:          usage,
+		ChatJimmyStats: statsOut,
 	}
+}
+
+func finishReasonFromStats(stats map[string]any) string {
+	if len(stats) == 0 {
+		return "stop"
+	}
+	for _, key := range []string{"done_reason", "reason"} {
+		value, ok := stats[key]
+		if !ok || value == nil {
+			continue
+		}
+		s := strings.ToLower(fmt.Sprint(value))
+		if strings.Contains(s, "length") || strings.Contains(s, "max_token") {
+			return "length"
+		}
+	}
+	return "stop"
 }
 
 func BuildStreamChunks(completion Completion) []StreamChunk {
@@ -119,7 +139,10 @@ func BuildStreamChunks(completion Completion) []StreamChunk {
 	if msg.Content != nil {
 		content = *msg.Content
 	}
-	reasonStop := "stop"
+	reasonStop := choice.FinishReason
+	if reasonStop == "" {
+		reasonStop = "stop"
+	}
 	return []StreamChunk{
 		{
 			ID: id, Object: "chat.completion.chunk", Created: created, Model: model,
@@ -157,7 +180,6 @@ func EncodeSSEChunks(chunks []StreamChunk) []byte {
 }
 
 func NewOpenAIError(message, typ, code string, status int) (OpenAIError, int) {
-	_ = status
 	err := OpenAIError{}
 	err.Error.Message = message
 	err.Error.Type = typ

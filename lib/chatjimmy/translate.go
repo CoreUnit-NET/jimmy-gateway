@@ -8,12 +8,12 @@ import (
 
 type TranslateOptions struct {
 	DefaultModel string
-	TopK         int
 }
 
 type TranslateResult struct {
 	Model           string
 	Payload         UpstreamPayload
+	Tools           []Tool
 	SystemTruncated bool
 }
 
@@ -22,29 +22,31 @@ func TranslateRequest(req ChatRequest, opts TranslateOptions) (TranslateResult, 
 		return TranslateResult{}, fmt.Errorf("messages must be a non-empty array")
 	}
 
-	model := strings.TrimSpace(req.Model)
-	if model == "" {
-		model = strings.TrimSpace(opts.DefaultModel)
+	responseModel := strings.TrimSpace(req.Model)
+	if responseModel == "" && req.ChatOptions != nil {
+		responseModel = strings.TrimSpace(req.ChatOptions.SelectedModel)
 	}
-	if model == "" {
-		model = DefaultModel
+	if responseModel == "" {
+		responseModel = strings.TrimSpace(opts.DefaultModel)
 	}
-
-	topK := opts.TopK
-	if topK <= 0 {
-		topK = DefaultTopK
+	if responseModel == "" {
+		responseModel = DefaultModel
 	}
 
 	tools := FilterTools(req.Tools)
 	systemParts := make([]string, 0, 2)
 	chatMessages := make([]UpstreamMessage, 0, len(req.Messages))
+	var attachment *Attachment
 
 	for _, msg := range req.Messages {
 		role := strings.TrimSpace(msg.Role)
 		if role == "" {
 			role = "user"
 		}
-		content := ContentToText(msg.Content)
+		content, partAtt := ParseContent(msg.Content)
+		if attachment == nil && partAtt != nil {
+			attachment = partAtt
+		}
 
 		switch role {
 		case "system":
@@ -100,6 +102,9 @@ func TranslateRequest(req ChatRequest, opts TranslateOptions) (TranslateResult, 
 	}
 
 	systemPrompt := strings.TrimSpace(strings.Join(systemParts, "\n"))
+	if systemPrompt == "" && req.ChatOptions != nil {
+		systemPrompt = strings.TrimSpace(req.ChatOptions.SystemPrompt)
+	}
 	if len(tools) > 0 {
 		systemPrompt += FormatToolsForPrompt(tools, req.ToolChoice)
 	}
@@ -110,17 +115,134 @@ func TranslateRequest(req ChatRequest, opts TranslateOptions) (TranslateResult, 
 		truncated = true
 	}
 
+	options := UpstreamOptions{
+		SelectedModel: MapModel(responseModel),
+		SystemPrompt:  systemPrompt,
+		TopK:          resolveTopK(req),
+		Temperature:   resolveTemperature(req),
+		TopP:          resolveTopP(req),
+		MaxTokens:     resolveMaxTokens(req),
+		StopSequences: resolveStop(req),
+		Stream:        req.Stream,
+	}
+	if !options.Stream && req.ChatOptions != nil {
+		options.Stream = req.ChatOptions.Stream
+	}
+
 	return TranslateResult{
-		Model: model,
+		Model: responseModel,
 		Payload: UpstreamPayload{
-			Messages: chatMessages,
-			ChatOptions: UpstreamOptions{
-				SelectedModel: model,
-				SystemPrompt:  systemPrompt,
-				TopK:          topK,
-			},
-			Attachment: nil,
+			Messages:    chatMessages,
+			ChatOptions: options,
+			Attachment:  attachment,
 		},
+		Tools:           tools,
 		SystemTruncated: truncated,
 	}, nil
+}
+
+func resolveTopK(req ChatRequest) int {
+	for _, v := range []*int{req.TopK, req.TopKCamel} {
+		if v != nil && *v > 0 {
+			return *v
+		}
+	}
+	if req.ChatOptions != nil && req.ChatOptions.TopK > 0 {
+		return req.ChatOptions.TopK
+	}
+	return DefaultTopK
+}
+
+func resolveTemperature(req ChatRequest) *float64 {
+	if req.Temperature != nil {
+		return normalizeOpenAITemperature(*req.Temperature)
+	}
+	if req.ChatOptions != nil && req.ChatOptions.Temperature != nil {
+		return clampUnit(*req.ChatOptions.Temperature)
+	}
+	return nil
+}
+
+func resolveTopP(req ChatRequest) *float64 {
+	if req.TopP != nil {
+		return clampUnit(*req.TopP)
+	}
+	if req.ChatOptions != nil && req.ChatOptions.TopP != nil {
+		return clampUnit(*req.ChatOptions.TopP)
+	}
+	return nil
+}
+
+func resolveMaxTokens(req ChatRequest) *int {
+	if req.MaxTokens != nil && *req.MaxTokens >= 1 {
+		v := *req.MaxTokens
+		return &v
+	}
+	if req.ChatOptions != nil && req.ChatOptions.MaxTokens != nil && *req.ChatOptions.MaxTokens >= 1 {
+		v := *req.ChatOptions.MaxTokens
+		return &v
+	}
+	return nil
+}
+
+func resolveStop(req ChatRequest) []string {
+	if seq := parseStop(req.Stop); len(seq) > 0 {
+		return seq
+	}
+	if req.ChatOptions != nil && len(req.ChatOptions.StopSequences) > 0 {
+		return req.ChatOptions.StopSequences
+	}
+	return nil
+}
+
+func parseStop(raw json.RawMessage) []string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return nil
+		}
+		return []string{s}
+	}
+	var arr []string
+	if err := json.Unmarshal(raw, &arr); err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, item := range arr {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			out = append(out, item)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func normalizeOpenAITemperature(v float64) *float64 {
+	if v < 0 {
+		v = 0
+	}
+	if v > 2 {
+		v = 2
+	}
+	if v > 1 {
+		v = v / 2
+	}
+	return &v
+}
+
+func clampUnit(v float64) *float64 {
+	if v < 0 {
+		v = 0
+	}
+	if v > 1 {
+		v = 1
+	}
+	return &v
 }

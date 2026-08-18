@@ -75,8 +75,8 @@ func TestHandlerModels(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	data, ok := body["data"].([]any)
-	if !ok || len(data) != 1 {
-		t.Fatalf("data = %#v", body["data"])
+	if !ok || len(data) != len(chatjimmy.ListedModels()) {
+		t.Fatalf("data len = %d, want %d (%#v)", len(data), len(chatjimmy.ListedModels()), body["data"])
 	}
 }
 
@@ -184,7 +184,7 @@ func TestHandlerChatCompletions(t *testing.T) {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	var completion completionPayload
+	var completion chatjimmy.Completion
 	if err := json.Unmarshal(rec.Body.Bytes(), &completion); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -195,14 +195,12 @@ func TestHandlerChatCompletions(t *testing.T) {
 		t.Fatal("expected chatjimmy_stats")
 	}
 
-	choices := completion.Choices
-	if len(choices) == 0 {
+	if len(completion.Choices) == 0 {
 		t.Fatalf("choices = %#v", completion.Choices)
 	}
-	choice := choices[0].(map[string]any)
-	msg := choice["message"].(map[string]any)
-	if msg["content"] != "Hello" {
-		t.Fatalf("content = %#v", msg["content"])
+	msg := completion.Choices[0].Message
+	if msg.Content == nil || *msg.Content != "Hello" {
+		t.Fatalf("content = %#v", msg.Content)
 	}
 }
 
@@ -293,15 +291,6 @@ func TestResolvePath(t *testing.T) {
 		if got := resolvePath(tc.in); got != tc.want {
 			t.Fatalf("resolvePath(%q) = %q, want %q", tc.in, got, tc.want)
 		}
-	}
-}
-
-func TestResolveTopK(t *testing.T) {
-	if got := resolveTopK(chatCompletionRequest{TopK: json.RawMessage(`16`)}); got != 16 {
-		t.Fatalf("got %d", got)
-	}
-	if got := resolveTopK(chatCompletionRequest{}); got != chatjimmy.DefaultTopK {
-		t.Fatalf("got %d", got)
 	}
 }
 

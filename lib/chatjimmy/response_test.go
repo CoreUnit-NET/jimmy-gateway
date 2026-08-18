@@ -18,7 +18,7 @@ func TestBuildCompletionWithToolCalls(t *testing.T) {
 <tool_call>
 {"name":"read","arguments":{"path":"main.go"}}
 </tool_call>`
-	completion := BuildCompletion("llama3.1-8B", upstream, Usage{TotalTokens: 1}, tools)
+	completion := BuildCompletion("llama3.1-8B", upstream, Usage{TotalTokens: 1}, tools, nil)
 	if len(completion.Choices) != 1 {
 		t.Fatalf("choices = %d", len(completion.Choices))
 	}
@@ -35,7 +35,7 @@ func TestBuildCompletionWithToolCalls(t *testing.T) {
 }
 
 func TestBuildCompletionPlainText(t *testing.T) {
-	completion := BuildCompletion("llama3.1-8B", "hello", Usage{PromptTokens: 1}, nil)
+	completion := BuildCompletion("llama3.1-8B", "hello", Usage{PromptTokens: 1}, nil, nil)
 	if completion.Choices[0].FinishReason != "stop" {
 		t.Fatalf("finish_reason = %q", completion.Choices[0].FinishReason)
 	}

@@ -26,7 +26,7 @@ func TestTranslateRequestSystemAndUser(t *testing.T) {
 			{Role: "user", Content: json.RawMessage(`"hello"`)},
 		},
 	}
-	out, err := TranslateRequest(req, TranslateOptions{DefaultModel: DefaultModel, TopK: 8})
+	out, err := TranslateRequest(req, TranslateOptions{DefaultModel: DefaultModel})
 	if err != nil {
 		t.Fatalf("TranslateRequest: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestTranslateRequestTruncatesSystemPrompt(t *testing.T) {
 			{Role: "user", Content: json.RawMessage(`"hi"`)},
 		},
 	}
-	out, err := TranslateRequest(req, TranslateOptions{DefaultModel: DefaultModel, TopK: 8})
+	out, err := TranslateRequest(req, TranslateOptions{DefaultModel: DefaultModel})
 	if err != nil {
 		t.Fatalf("TranslateRequest: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestTranslateRequestAssistantToolCalls(t *testing.T) {
 			{Role: "user", Content: json.RawMessage(`"continue"`)},
 		},
 	}
-	out, err := TranslateRequest(req, TranslateOptions{DefaultModel: DefaultModel, TopK: 8})
+	out, err := TranslateRequest(req, TranslateOptions{DefaultModel: DefaultModel})
 	if err != nil {
 		t.Fatalf("TranslateRequest: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestTranslateRequestToolResultMessage(t *testing.T) {
 			{Role: "user", Content: json.RawMessage(`"thanks"`)},
 		},
 	}
-	out, err := TranslateRequest(req, TranslateOptions{DefaultModel: DefaultModel, TopK: 8})
+	out, err := TranslateRequest(req, TranslateOptions{DefaultModel: DefaultModel})
 	if err != nil {
 		t.Fatalf("TranslateRequest: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestTranslateRequestInjectToolsIntoSystemPrompt(t *testing.T) {
 			Function: ToolFunction{Name: "bash", Description: "Run shell."},
 		}},
 	}
-	out, err := TranslateRequest(req, TranslateOptions{DefaultModel: DefaultModel, TopK: 8})
+	out, err := TranslateRequest(req, TranslateOptions{DefaultModel: DefaultModel})
 	if err != nil {
 		t.Fatalf("TranslateRequest: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestTranslateRequestOnlySystemMessagesError(t *testing.T) {
 			{Role: "system", Content: json.RawMessage(`"rules"`)},
 		},
 	}
-	_, err := TranslateRequest(req, TranslateOptions{DefaultModel: DefaultModel, TopK: 8})
+	_, err := TranslateRequest(req, TranslateOptions{DefaultModel: DefaultModel})
 	if err == nil {
 		t.Fatal("expected error for system-only messages")
 	}

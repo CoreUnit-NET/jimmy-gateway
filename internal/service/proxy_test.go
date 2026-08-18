@@ -8,69 +8,102 @@ import (
 	"github.com/CoreUnit-NET/jimmy-gateway/lib/chatjimmy"
 )
 
-func TestResolveModel(t *testing.T) {
+func intPtr(v int) *int { return &v }
+
+func userMessages() []chatjimmy.Message {
+	return []chatjimmy.Message{{Role: "user", Content: json.RawMessage(`"hi"`)}}
+}
+
+func TestTranslateRequestModel(t *testing.T) {
 	tests := []struct {
 		name string
-		req  chatCompletionRequest
+		req  chatjimmy.ChatRequest
 		want string
 	}{
 		{
 			name: "request model",
-			req:  chatCompletionRequest{ChatRequest: chatjimmy.ChatRequest{Model: "custom-model"}},
+			req:  chatjimmy.ChatRequest{Model: "custom-model", Messages: userMessages()},
 			want: "custom-model",
 		},
 		{
 			name: "chatOptions selectedModel",
-			req: chatCompletionRequest{
-				ChatOptions: &chatOptions{SelectedModel: "from-options"},
+			req: chatjimmy.ChatRequest{
+				Messages:    userMessages(),
+				ChatOptions: &chatjimmy.NativeOptions{SelectedModel: "from-options"},
 			},
 			want: "from-options",
 		},
 		{
 			name: "default",
-			req:  chatCompletionRequest{},
+			req:  chatjimmy.ChatRequest{Messages: userMessages()},
 			want: chatjimmy.DefaultModel,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := resolveModel(tc.req); got != tc.want {
-				t.Fatalf("resolveModel() = %q, want %q", got, tc.want)
+			out, err := chatjimmy.TranslateRequest(tc.req, chatjimmy.TranslateOptions{DefaultModel: chatjimmy.DefaultModel})
+			if err != nil {
+				t.Fatalf("TranslateRequest: %v", err)
+			}
+			if out.Model != tc.want {
+				t.Fatalf("model = %q, want %q", out.Model, tc.want)
 			}
 		})
 	}
 }
 
-func TestParseTopKRaw(t *testing.T) {
+func TestTranslateRequestTopKPrecedence(t *testing.T) {
 	tests := []struct {
-		raw  json.RawMessage
+		name string
+		req  chatjimmy.ChatRequest
 		want int
 	}{
-		{json.RawMessage(`8`), 8},
-		{json.RawMessage(`"16"`), 16},
-		{json.RawMessage(`0`), 0},
-		{json.RawMessage(`null`), 0},
-		{json.RawMessage(`"nope"`), 0},
+		{
+			name: "top_k wins",
+			req: chatjimmy.ChatRequest{
+				Messages:    userMessages(),
+				TopK:        intPtr(4),
+				TopKCamel:   intPtr(12),
+				ChatOptions: &chatjimmy.NativeOptions{TopK: 99},
+			},
+			want: 4,
+		},
+		{
+			name: "topK camel",
+			req: chatjimmy.ChatRequest{
+				Messages:  userMessages(),
+				TopKCamel: intPtr(12),
+			},
+			want: 12,
+		},
+		{
+			name: "chatOptions topK",
+			req: chatjimmy.ChatRequest{
+				Messages:    userMessages(),
+				ChatOptions: &chatjimmy.NativeOptions{TopK: 99},
+			},
+			want: 99,
+		},
+		{
+			name: "default",
+			req:  chatjimmy.ChatRequest{Messages: userMessages()},
+			want: chatjimmy.DefaultTopK,
+		},
 	}
 	for _, tc := range tests {
-		if got := parseTopKRaw(tc.raw); got != tc.want {
-			t.Fatalf("parseTopKRaw(%s) = %d, want %d", tc.raw, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := chatjimmy.TranslateRequest(tc.req, chatjimmy.TranslateOptions{})
+			if err != nil {
+				t.Fatalf("TranslateRequest: %v", err)
+			}
+			if got := out.Payload.ChatOptions.TopK; got != tc.want {
+				t.Fatalf("topK = %d, want %d", got, tc.want)
+			}
+		})
 	}
 }
 
-func TestResolveTopKPrecedence(t *testing.T) {
-	req := chatCompletionRequest{
-		TopK:        json.RawMessage(`4`),
-		TopKAlt:     json.RawMessage(`12`),
-		ChatOptions: &chatOptions{TopK: 99},
-	}
-	if got := resolveTopK(req); got != 4 {
-		t.Fatalf("top_k precedence = %d, want 4", got)
-	}
-}
-
-func TestBuildCompletionResponseIncludesStatsAndToolCalls(t *testing.T) {
+func TestBuildCompletionIncludesStatsAndToolCalls(t *testing.T) {
 	tools := []chatjimmy.Tool{{
 		Type: "function",
 		Function: chatjimmy.ToolFunction{
@@ -82,7 +115,7 @@ func TestBuildCompletionResponseIncludesStatsAndToolCalls(t *testing.T) {
 {"name":"read","arguments":{"path":"x"}}
 </tool_call>`
 	stats := map[string]any{"prefill_tokens": 1, "decode_tokens": 2, "total_tokens": 3}
-	got := buildCompletionResponse("llama3.1-8B", upstreamText, chatjimmy.Usage{TotalTokens: 3}, stats, tools)
+	got := chatjimmy.BuildCompletion("llama3.1-8B", upstreamText, chatjimmy.Usage{TotalTokens: 3}, tools, stats)
 
 	if got.ChatJimmyStats == nil {
 		t.Fatal("expected chatjimmy_stats")
@@ -93,25 +126,24 @@ func TestBuildCompletionResponseIncludesStatsAndToolCalls(t *testing.T) {
 	if len(got.Choices) != 1 {
 		t.Fatalf("choices = %d", len(got.Choices))
 	}
-	choice := got.Choices[0].(map[string]any)
-	if choice["finish_reason"] != "tool_calls" {
-		t.Fatalf("finish_reason = %#v", choice["finish_reason"])
+	choice := got.Choices[0]
+	if choice.FinishReason != "tool_calls" {
+		t.Fatalf("finish_reason = %q", choice.FinishReason)
 	}
-	msg := choice["message"].(map[string]any)
-	if _, ok := msg["tool_calls"]; !ok {
-		t.Fatalf("message = %#v", msg)
+	if len(choice.Message.ToolCalls) == 0 {
+		t.Fatalf("message = %+v", choice.Message)
 	}
 }
 
-func TestEncodeStreamPlainContent(t *testing.T) {
-	completion := buildCompletionResponse(
+func TestEncodeSSEPlainContent(t *testing.T) {
+	completion := chatjimmy.BuildCompletion(
 		"llama3.1-8B",
 		"hello stream",
 		chatjimmy.Usage{TotalTokens: 1},
 		nil,
 		nil,
 	)
-	out := string(encodeStream(completion, nil))
+	out := string(chatjimmy.EncodeSSEChunks(chatjimmy.BuildStreamChunks(completion)))
 	if !strings.Contains(out, "data: [DONE]") {
 		t.Fatalf("missing DONE: %q", out)
 	}
@@ -123,16 +155,16 @@ func TestEncodeStreamPlainContent(t *testing.T) {
 	}
 }
 
-func TestEncodeStreamToolCalls(t *testing.T) {
+func TestEncodeSSEToolCalls(t *testing.T) {
 	tools := []chatjimmy.Tool{{Type: "function", Function: chatjimmy.ToolFunction{Name: "read"}}}
-	completion := buildCompletionResponse(
+	completion := chatjimmy.BuildCompletion(
 		"llama3.1-8B",
 		`<tool_call>{"name":"read","arguments":{"path":"a"}}</tool_call>`,
 		chatjimmy.Usage{},
-		nil,
 		tools,
+		nil,
 	)
-	out := string(encodeStream(completion, tools))
+	out := string(chatjimmy.EncodeSSEChunks(chatjimmy.BuildStreamChunks(completion)))
 	if !strings.Contains(out, "tool_calls") {
 		t.Fatalf("expected tool_calls in stream: %q", out)
 	}

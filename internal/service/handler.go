@@ -34,7 +34,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodOptions {
-		writeCORS(w)
+		h.writeCORS(w)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -43,41 +43,46 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch path {
 	case "/", "/health":
 		if r.Method != http.MethodGet {
-			writeOpenAIError(w, "Method not allowed", "invalid_request_error", "method_not_allowed", http.StatusMethodNotAllowed)
+			h.writeOpenAIError(w, "Method not allowed", "invalid_request_error", "method_not_allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		h.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	case "/v1/models":
 		if r.Method != http.MethodGet {
-			writeOpenAIError(w, "Method not allowed", "invalid_request_error", "method_not_allowed", http.StatusMethodNotAllowed)
+			h.writeOpenAIError(w, "Method not allowed", "invalid_request_error", "method_not_allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		h.handleModels(w)
 	case "/v1/chat/completions":
 		if r.Method != http.MethodPost {
-			writeOpenAIError(w, "Method not allowed", "invalid_request_error", "method_not_allowed", http.StatusMethodNotAllowed)
+			h.writeOpenAIError(w, "Method not allowed", "invalid_request_error", "method_not_allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		if !h.authorize(r) {
-			writeOpenAIError(w, "Invalid API key", "invalid_api_key", "invalid_api_key", http.StatusUnauthorized)
+			h.writeOpenAIError(w, "Invalid API key", "invalid_api_key", "invalid_api_key", http.StatusUnauthorized)
 			return
 		}
 		h.handleChatCompletions(w, r)
 	default:
-		writeOpenAIError(w, "Not found", "invalid_request_error", "not_found", http.StatusNotFound)
+		h.writeOpenAIError(w, "Not found", "invalid_request_error", "not_found", http.StatusNotFound)
 	}
 }
 
 func (h *Handler) handleModels(w http.ResponseWriter) {
 	now := time.Now().Unix()
-	writeJSON(w, http.StatusOK, map[string]any{
-		"object": "list",
-		"data": []map[string]any{{
-			"id":       chatjimmy.DefaultModel,
+	models := chatjimmy.ListedModels()
+	data := make([]map[string]any, 0, len(models))
+	for _, id := range models {
+		data = append(data, map[string]any{
+			"id":       id,
 			"object":   "model",
 			"created":  now,
 			"owned_by": "chatjimmy",
-		}},
+		})
+	}
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"object": "list",
+		"data":   data,
 	})
 }
 
@@ -86,18 +91,18 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		var pe *proxyError
 		if ok := asProxyError(err, &pe); ok {
-			writeOpenAIError(w, pe.message, pe.typ, pe.code, pe.status)
+			h.writeOpenAIError(w, pe.message, pe.typ, pe.code, pe.status)
 			return
 		}
-		writeOpenAIError(w, err.Error(), "api_error", "upstream_error", http.StatusBadGateway)
+		h.writeOpenAIError(w, err.Error(), "api_error", "upstream_error", http.StatusBadGateway)
 		return
 	}
 
 	if result.stream {
-		writeSSE(w, encodeStream(result.completion, result.tools))
+		h.writeSSE(w, chatjimmy.EncodeSSEChunks(chatjimmy.BuildStreamChunks(result.completion)))
 		return
 	}
-	writeJSON(w, http.StatusOK, result.completion)
+	h.writeJSON(w, http.StatusOK, result.completion)
 }
 
 func (h *Handler) authorize(r *http.Request) bool {
@@ -113,27 +118,27 @@ func (h *Handler) authorize(r *http.Request) bool {
 	return actual != "" && actual == expected
 }
 
-func writeCORS(w http.ResponseWriter) {
+func (h *Handler) writeCORS(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Authorization,Content-Type")
 	w.Header().Set("Access-Control-Max-Age", "86400")
 }
 
-func writeJSON(w http.ResponseWriter, status int, data any) {
-	writeCORS(w)
+func (h *Handler) writeJSON(w http.ResponseWriter, status int, data any) {
+	h.writeCORS(w)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(data)
 }
 
-func writeOpenAIError(w http.ResponseWriter, message, typ, code string, status int) {
+func (h *Handler) writeOpenAIError(w http.ResponseWriter, message, typ, code string, status int) {
 	body, _ := chatjimmy.NewOpenAIError(message, typ, code, status)
-	writeJSON(w, status, body)
+	h.writeJSON(w, status, body)
 }
 
-func writeSSE(w http.ResponseWriter, payload []byte) {
-	writeCORS(w)
+func (h *Handler) writeSSE(w http.ResponseWriter, payload []byte) {
+	h.writeCORS(w)
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
