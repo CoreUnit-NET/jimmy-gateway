@@ -28,7 +28,7 @@ func TestContentToTextArrayParts(t *testing.T) {
 		"plain"
 	]`)
 	got := ContentToText(raw)
-	want := "line one\nline two\n\"plain\""
+	want := "line one\nline two\nplain"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
