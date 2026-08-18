@@ -28,11 +28,11 @@ ChatJimmy currently exposes a single public chat endpoint and no native function
 
 ### How it works
 
-1. Client calls OpenAI-compatible HTTP (`GET /`, `GET /health`, `GET /v1/models`, `POST /v1/chat/completions`, stream or non-stream). Path aliases (`/api/health`, `/api/v1-models`, `/api/v1-chat-completions`) map onto the same handlers.
-2. Gateway merges system messages, filters OpenCode orchestration tools, injects `<tool_call>` instructions when tools remain, maps sampling fields into ChatJimmy `chatOptions`, and optionally extracts a single image attachment.
-3. Upstream talk goes to ChatJimmy over HTTPS (`https://chatjimmy.ai/api/chat` by default) with browser-like `Origin` / `Referer` / `User-Agent` headers. An empty body is retried once.
-4. The upstream response is parsed: `<|stats|>` / `<stats>` tags are stripped, token usage is extracted, assistant text is kept, and `<tool_call>` XML is converted into OpenAI `tool_calls` when tools were offered.
-5. Non-streaming clients get a single JSON completion; streaming clients receive buffered SSE chunks in OpenAI `chat.completion.chunk` shape. Time-to-first-token equals full generation time because ChatJimmy is fully read before any chunk is written.
+1. Client calls OpenAI-compatible HTTP (`GET /`, `GET /health`, `GET /v1/models`, `POST /v1/chat/completions`), native `POST /api/chat`, Anthropic `POST /v1/messages`, or Gemini `generateContent` / `streamGenerateContent`. Path aliases (`/api/health`, `/api/v1-models`, `/api/v1-chat-completions`) map onto the OpenAI handlers.
+2. Gateway merges system messages, filters OpenCode orchestration tools, injects `<tool_call>` instructions when tools remain (`tool_choice: none` skips that), maps sampling fields into ChatJimmy `chatOptions`, and optionally extracts a single image attachment. Oversized prompts drop the `<tools>` JSON block before the 28K hard slice; `<tool_result>` bodies are capped at 8K.
+3. Upstream talk goes to ChatJimmy over HTTPS (`https://chatjimmy.ai/api/chat` by default) with browser-like `Origin` / `Referer` / `User-Agent` headers. Network / 408 / 429 / 5xx responses retry with backoff; an empty body is retried once on top of that.
+4. The upstream response is parsed: `<|stats|>` / `<stats>` tags are stripped, token usage is extracted, assistant text is kept, and `<tool_call>` XML is converted into OpenAI `tool_calls` when tools were offered (skipped when `tool_choice` is `none`). Anthropic and Gemini adapters wrap the same completion.
+5. Non-streaming clients get a single JSON completion; streaming clients receive buffered SSE in the requested protocol shape. Time-to-first-token equals full generation time because ChatJimmy is fully read before any chunk is written.
 
 </details>
 
@@ -41,19 +41,22 @@ ChatJimmy currently exposes a single public chat endpoint and no native function
 ### Features
 
 - **OpenAI-compatible API:** `/v1/models` and `/v1/chat/completions` for text chat, tool calls, and streaming. Health is `GET /` and `GET /health` (`{"status":"ok"}`).
-- **ChatJimmy upstream:** Proxies to ChatJimmy's Llama 3.1 8B chat endpoint (`https://chatjimmy.ai/api/chat`). No upstream API key is required today.
+- **Native ChatJimmy passthrough:** `POST /api/chat` forwards `{messages, chatOptions, attachment}` without OpenAI translation.
+- **Anthropic / Gemini HTTP:** `POST /v1/messages` and Gemini `POST /v1beta/models/{model}:generateContent` (plus `:streamGenerateContent`) reuse the same XML tool layer. Stream flags still buffer until ChatJimmy actually streams.
+- **ChatJimmy upstream:** Proxies to ChatJimmy's Llama 3.1 8B chat endpoint (`https://chatjimmy.ai/api/chat` by default). URL, timeout, and optional upstream Bearer (`CHATJIMMY_API_KEY`) are configurable.
 - **Request translation:** Maps OpenAI `system` / `user` / `assistant` / `tool` messages into ChatJimmy's `{messages, chatOptions, attachment}` payload, including system-prompt merge and assistant/tool round-trips.
 - **Sampling passthrough:** Forwards `temperature` (OpenAI 0–2 scaled to ChatJimmy 0–1), `top_p`, `top_k` / `topK` (default 8), `max_tokens`, and `stop` / `stopSequences`. Native `chatOptions` on the request body are accepted as a fallback.
-- **Model aliases:** `/v1/models` lists `llama3.1-8B` plus common OpenAI / Anthropic / Gemini ids. All of them map to the same upstream model.
-- **Tool XML emulation:** Injects Llama-friendly tool instructions and parses `<tool_call>` blocks back into OpenAI `tool_calls`, including `tool_choice` of `auto`, `none`, `required`, or a named function.
+- **Model aliases:** `/v1/models` lists `llama3.1-8B` plus common OpenAI / Anthropic / Gemini ids. All of them map to the same upstream model. Extra advertised ids come from `CHATJIMMY_MODELS`.
+- **Tool XML emulation:** Injects Llama-friendly tool instructions and parses `<tool_call>` blocks back into OpenAI `tool_calls`, including `tool_choice` of `auto`, `none`, `required`, or a named function. `tool_choice: none` skips schema inject and XML parse.
 - **OpenCode tool filtering:** Strips high-level orchestration tools (`webfetch`, `todowrite`, `skill`, `question`, `task`) before they reach the model so smaller prompts stay on file/shell/search tools.
-- **System prompt safeguard:** Truncates oversized system prompts at 28K characters to avoid ChatJimmy's silent empty-response limit (~30K).
+- **System prompt safeguard:** Truncates oversized system prompts at 28K characters to avoid ChatJimmy's silent empty-response limit (~30K). Before that hard slice, `<tools>…</tools>` JSON is dropped; `<tool_result>` bodies are capped at 8K characters.
 - **Image attachments:** Forwards one OpenAI `image_url` data-URL or Gemini-style `inlineData` part as ChatJimmy `attachment`.
 - **Stats mapping:** Strips `<|stats|>` / `<stats>` JSON, fills OpenAI `usage` from `prefill_tokens` / `decode_tokens` / `total_tokens`, and echoes raw metrics as `chatjimmy_stats`.
-- **Optional gateway auth:** When `API_KEY` is set, `/v1/chat/completions` requires `Authorization: Bearer …` (`OPENAI_API_KEY` is accepted as an alias).
-- **CORS:** OPTIONS and JSON/SSE responses send `Access-Control-Allow-Origin: *` plus allow-methods/headers for browser or local tooling.
-- **Buffered streaming:** Upstream responses are buffered first, then emitted as SSE so clients still get OpenAI-style stream chunks (including tool-call deltas after the full XML is parsed).
-- **Empty-body retry:** If ChatJimmy returns an empty body, the gateway retries the same payload once.
+- **Optional gateway auth:** When `API_KEY` is set, chat routes require `Authorization: Bearer …`, `x-api-key`, or `x-goog-api-key` (`OPENAI_API_KEY` is accepted as an alias).
+- **CORS:** OPTIONS and JSON/SSE responses send `Access-Control-Allow-Origin` from `ALLOWED_ORIGIN` (default `*`). A non-wildcard origin also sets `Vary: Origin`. Allow-headers include `x-api-key`.
+- **Buffered streaming:** Upstream responses are buffered first, then emitted as SSE so clients still get protocol-shaped stream chunks (including tool-call deltas after the full XML is parsed).
+- **Retries:** Network / 408 / 429 / 5xx retry up to 3 extra times with 1s/2s/4s backoff (cap 10s), honoring `Retry-After`. An empty ChatJimmy body is retried once without consuming that budget.
+- **Verbose logs:** `-b` / `VERBOSE` logs method, path, status, duration, truncation, compaction, and token usage.
 
 </details>
 
@@ -67,8 +70,7 @@ ChatJimmy currently exposes a single public chat endpoint and no native function
 - **Native function calling:** ChatJimmy has no native tools API. Tool use is emulated in the prompt/response layer only.
 - **True upstream streaming:** Time-to-first-token equals full generation time because the gateway buffers ChatJimmy's response before emitting SSE.
 - **Embeddings / extra OpenAI APIs:** No `/v1/embeddings`, `/v1/completions`, images, audio, or files endpoints.
-- **Anthropic / Gemini HTTP:** Model _names_ are aliased on the OpenAI routes. There is no `POST /v1/messages` or Gemini `generateContent` server.
-- **Multiple upstream models:** ChatJimmy currently exposes Llama 3.1 8B only. Advertised aliases all forward to that service.
+- **Multiple upstream models:** ChatJimmy currently exposes Llama 3.1 8B only. Advertised aliases and extra `CHATJIMMY_MODELS` ids all forward to that service.
 - **Model quality expectations:** Llama 3.1 8B on ChatJimmy is aggressively quantized (3-bit/6-bit) on a small context window, so quality is below typical GPU baselines. It is built for speed, not deep reasoning.
 
 </details>
@@ -77,18 +79,12 @@ ChatJimmy currently exposes a single public chat endpoint and no native function
 
 ### Future
 
-These are not implemented. They are the next gateway-side improvements if ChatJimmy stays a single chat endpoint.
+Shipped items from the previous list (CORS, upstream config, retries, native `/api/chat`, `tool_choice: none`, Anthropic/Gemini HTTP, tool-JSON compaction, verbose latency logs, extra model ids) are in [Features](#features). Still open if ChatJimmy stays a single chat endpoint:
 
-- **Configurable CORS origin:** `ALLOWED_ORIGIN` / `--allowed-origin` instead of hard-coded `*`.
-- **Configurable upstream:** URL, timeout, and optional upstream auth header (today the chat URL and 120s timeout are built in).
-- **Retry on 5xx / 429:** Exponential backoff in addition to the empty-body retry.
-- **Native passthrough:** `POST /api/chat` that forwards ChatJimmy's own `{messages, chatOptions, attachment}` body without OpenAI translation.
-- **Skip tools on `tool_choice: none`:** Do not inject the tool schema when the client forbids calls.
-- **Anthropic Messages / Gemini generateContent:** HTTP adapters that reuse the existing XML tool layer (not a second translator).
-- **Prompt compaction:** Summarize or drop old turns before the 28K system-prompt hard truncate.
-- **Observability:** Structured request logs, latency, and optional metrics.
-- **True SSE:** Emit tokens as they arrive if ChatJimmy ever streams instead of returning one body.
-- **New model ids:** Advertise extra ChatJimmy models when Taalas ships the planned mid-size reasoning model; keep aliasing until then.
+- **True SSE:** Emit tokens as they arrive if ChatJimmy ever streams instead of returning one body. `TrueSSE` is gated and still buffers.
+- **Prompt summarization:** Compact old turns with an LLM when dropping `<tools>` JSON is not enough.
+- **Metrics:** Optional Prometheus / structured metrics beyond verbose logs.
+- **New ChatJimmy models:** Advertise extra ids when Taalas ships the planned mid-size reasoning model (`CHATJIMMY_MODELS` already accepts extras).
 
 Not planned here (needs ChatJimmy itself, or another process in front): native function calling, embeddings, TLS, client rate limits, multi-account OAuth.
 
@@ -127,15 +123,21 @@ jimmy-gateway serve
 
 ### API
 
-The gateway exposes standard OpenAI-compatible endpoints:
+The gateway exposes OpenAI-compatible endpoints plus native ChatJimmy, Anthropic, and Gemini HTTP:
 
-| Method | Path                   | Description                      |
-| ------ | ---------------------- | -------------------------------- |
-| `GET`  | `/`, `/health`         | Health check (`{"status":"ok"}`) |
-| `GET`  | `/v1/models`           | List advertised model ids        |
-| `POST` | `/v1/chat/completions` | Chat completion (JSON or SSE)    |
+| Method | Path | Description |
+| ------ | ---- | ----------- |
+| `GET`  | `/`, `/health` | Health check (`{"status":"ok"}`) |
+| `GET`  | `/v1/models` | List advertised model ids |
+| `POST` | `/v1/chat/completions` | OpenAI chat completion (JSON or buffered SSE) |
+| `POST` | `/api/chat` | Native ChatJimmy passthrough (`{messages, chatOptions, attachment}`) |
+| `POST` | `/v1/messages` | Anthropic Messages (JSON or buffered SSE) |
+| `POST` | `/v1beta/models/{model}:generateContent` | Gemini generate (JSON) |
+| `POST` | `/v1beta/models/{model}:streamGenerateContent` | Gemini stream (buffered SSE) |
 
 Aliases: `/api` → `/`, `/api/health` → `/health`, `/api/v1-models` → `/v1/models`, `/api/v1-chat-completions` → `/v1/chat/completions`.
+
+`POST /api/chat` forwards the ChatJimmy payload as-is and returns the raw upstream body as `text/plain`. Anthropic and Gemini wrap the same XML tool layer as OpenAI; stream flags still buffer until ChatJimmy actually streams.
 
 **Request body** for `POST /v1/chat/completions`:
 
@@ -243,17 +245,26 @@ A `.env` file in the working directory is loaded at startup when present (missin
 
 - `HOST` or `--host`: bind host, defaults to `0.0.0.0`
 - `PORT` or `-p` / `--port`: bind port, defaults to `8080`
-- `API_KEY` or `--api-key`: optional Bearer key for `/v1/chat/completions`. `OPENAI_API_KEY` is used when `API_KEY` is empty. Off by default.
-- `VERBOSE` or `-b` / `--verbose`: log method and path, defaults to `false`
+- `API_KEY` or `--api-key`: optional gateway key for chat routes. Clients may send `Authorization: Bearer …`, `x-api-key`, or `x-goog-api-key`. `OPENAI_API_KEY` is used when `API_KEY` is empty. Off by default.
+- `VERBOSE` or `-b` / `--verbose`: log method, path, status, duration, truncation, compaction, and token usage. Defaults to `false`.
+- `ALLOWED_ORIGIN` or `--allowed-origin`: CORS `Access-Control-Allow-Origin`. Defaults to `*`. A non-wildcard value also sets `Vary: Origin`.
+- `CHATJIMMY_URL` or `--chatjimmy-url`: upstream chat URL. Defaults to `https://chatjimmy.ai/api/chat`. Must be `http` or `https`.
+- `CHATJIMMY_TIMEOUT` or `--chatjimmy-timeout`: upstream timeout in seconds (1–300). Defaults to `120`.
+- `CHATJIMMY_API_KEY` or `--chatjimmy-api-key`: optional Bearer key sent upstream. Separate from gateway `API_KEY`.
+- `CHATJIMMY_MODEL` or `--chatjimmy-model`: default advertised / native model id. Defaults to `llama3.1-8B`.
+- `CHATJIMMY_MODELS` or `--chatjimmy-models`: extra advertised model ids, comma-separated. Aliases still map to ChatJimmy's single Llama 3.1 8B.
 
 Example `.env`:
 
 ```bash
 PORT=8080
 API_KEY=your-secret
+ALLOWED_ORIGIN=*
+CHATJIMMY_URL=https://chatjimmy.ai/api/chat
+CHATJIMMY_TIMEOUT=120
 ```
 
-ChatJimmy upstream URL, model, and default `topK` are built in: `https://chatjimmy.ai/api/chat`, model `llama3.1-8B`, `topK` 8. CORS origin is currently `*`. Run `jimmy-gateway -h` for CLI flags.
+Default `topK` is `8`. Production retries are 3 extra attempts with 1s/2s/4s backoff (cap 10s). Run `jimmy-gateway -h` for CLI flags.
 
 </details>
 
