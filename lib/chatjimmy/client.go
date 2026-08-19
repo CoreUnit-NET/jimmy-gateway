@@ -36,10 +36,6 @@ type Client struct {
 	// Zero skips sleeping between retries.
 	RetryBackoff time.Duration
 
-	// TrueSSE is gated: ChatJimmy currently returns one body. Do not stream
-	// tokens to clients from this flag — XML tool_call parse needs the full body.
-	TrueSSE bool
-
 	httpOnce   sync.Once
 	httpClient *http.Client
 }
@@ -54,12 +50,6 @@ func (c *Client) Chat(ctx context.Context, payload UpstreamPayload) (string, err
 	}
 	// One extra empty-body attempt. Does not recycle MaxRetries.
 	return c.roundTrip(ctx, payload, 0)
-}
-
-// ChatStream is the gated true-SSE hook. ChatJimmy still returns one blob, so
-// this currently buffers the same way Chat does.
-func (c *Client) ChatStream(ctx context.Context, payload UpstreamPayload) (string, error) {
-	return c.Chat(ctx, payload)
 }
 
 func (c *Client) maxRetries() int {
