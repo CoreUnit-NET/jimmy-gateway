@@ -179,6 +179,38 @@ func TestTranslateRequestToolResultMessage(t *testing.T) {
 	}
 }
 
+func TestTranslateRequestToolResultNameFromToolCallID(t *testing.T) {
+	req := ChatRequest{
+		Messages: []Message{
+			{
+				Role: "assistant",
+				ToolCalls: []ToolCall{{
+					ID:   "call_1",
+					Type: "function",
+					Function: ToolCallFunction{
+						Name:      "read",
+						Arguments: `{"path":"main.go"}`,
+					},
+				}},
+			},
+			{
+				Role:       "tool",
+				ToolCallID: "call_1",
+				Content:    json.RawMessage(`"file contents"`),
+			},
+			{Role: "user", Content: json.RawMessage(`"continue"`)},
+		},
+	}
+	out, err := TranslateRequest(req, TranslateOptions{DefaultModel: DefaultModel})
+	if err != nil {
+		t.Fatalf("TranslateRequest: %v", err)
+	}
+	toolMsg := out.Payload.Messages[1]
+	if !strings.Contains(toolMsg.Content, `"name": "read"`) && !strings.Contains(toolMsg.Content, `"name":"read"`) {
+		t.Fatalf("tool result should reuse tool name from tool_call_id: %q", toolMsg.Content)
+	}
+}
+
 func TestTranslateRequestMapsAliasToUpstream(t *testing.T) {
 	req := ChatRequest{
 		Model:    "gpt-4o",

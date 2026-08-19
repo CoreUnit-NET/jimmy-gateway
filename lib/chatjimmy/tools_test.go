@@ -19,6 +19,9 @@ func TestFormatToolsForPromptIncludesSchemas(t *testing.T) {
 	if !strings.Contains(prompt, "- read(path: string)") {
 		t.Fatalf("prompt missing signature: %q", prompt)
 	}
+	if !strings.Contains(prompt, `{"name": "read", "arguments": {"path": "value"}}`) {
+		t.Fatalf("prompt missing real tool example: %q", prompt)
+	}
 	if !strings.Contains(prompt, "<tools>") {
 		t.Fatal("expected compact tool schemas block")
 	}
@@ -41,7 +44,7 @@ func TestFormatToolsForPromptRequiredToolName(t *testing.T) {
 	}
 }
 
-func TestParseToolCallsNormalizesRequiredArgs(t *testing.T) {
+func TestParseToolCallsDoesNotInventRequiredArgs(t *testing.T) {
 	tools := []Tool{{
 		Type: "function",
 		Function: ToolFunction{
@@ -60,8 +63,8 @@ func TestParseToolCallsNormalizesRequiredArgs(t *testing.T) {
 	if err := json.Unmarshal([]byte(calls[0].Function.Arguments), &args); err != nil {
 		t.Fatalf("args json: %v", err)
 	}
-	if args["path"] != "" {
-		t.Fatalf("path = %#v, want empty string default", args["path"])
+	if _, ok := args["path"]; ok {
+		t.Fatalf("path should stay missing when model omitted required arg: %#v", args["path"])
 	}
 }
 

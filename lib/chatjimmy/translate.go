@@ -46,6 +46,7 @@ func TranslateRequest(req ChatRequest, opts TranslateOptions) (TranslateResult, 
 	systemParts := make([]string, 0, 2)
 	chatMessages := make([]UpstreamMessage, 0, len(req.Messages))
 	var attachment *Attachment
+	toolCallIDToName := map[string]string{}
 
 	for _, msg := range req.Messages {
 		role := normalizeRole(msg.Role)
@@ -66,6 +67,9 @@ func TranslateRequest(req ChatRequest, opts TranslateOptions) (TranslateResult, 
 					parts = append(parts, content)
 				}
 				for _, tc := range msg.ToolCalls {
+					if tc.ID != "" && tc.Function.Name != "" {
+						toolCallIDToName[tc.ID] = tc.Function.Name
+					}
 					var args any
 					if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
 						args = tc.Function.Arguments
@@ -85,6 +89,9 @@ func TranslateRequest(req ChatRequest, opts TranslateOptions) (TranslateResult, 
 			}
 		case "tool":
 			toolName := msg.Name
+			if toolName == "" && msg.ToolCallID != "" {
+				toolName = toolCallIDToName[msg.ToolCallID]
+			}
 			if toolName == "" {
 				toolName = "unknown"
 			}

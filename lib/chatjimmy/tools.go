@@ -48,13 +48,26 @@ func FormatToolsForPrompt(tools []Tool, toolChoice json.RawMessage) string {
 		return ""
 	}
 
+	// Use real tool+parameter names in the example so the model doesn't copy placeholders.
+	exampleToolName := tools[0].Function.Name
+	exampleParamKey := "required_param"
+	schema := parseParameters(tools[0].Function.Parameters)
+	if len(schema.Required) > 0 {
+		exampleParamKey = schema.Required[0]
+	} else if len(schema.Properties) > 0 {
+		for k := range schema.Properties {
+			exampleParamKey = k
+			break
+		}
+	}
+
 	lines := []string{
 		"",
 		"# Tools",
 		"When you need a tool, respond with one or more <tool_call> blocks and nothing else.",
 		"Format:",
 		"<tool_call>",
-		`{"name": "tool_name", "arguments": {"required_param": "value"}}`,
+		fmt.Sprintf(`{"name": %q, "arguments": {%q: "value"}}`, exampleToolName, exampleParamKey),
 		"</tool_call>",
 		"The `arguments` object MUST include all required parameters and only valid JSON.",
 		"Do not invent tool results. Tool results will be provided in <tool_result> tags.",
@@ -225,25 +238,6 @@ func toolSchemaIndex(tools []Tool) map[string]paramSchema {
 	return index
 }
 
-func defaultForType(typ string) any {
-	switch typ {
-	case "string":
-		return ""
-	case "integer":
-		return 0
-	case "number":
-		return 0
-	case "boolean":
-		return false
-	case "array":
-		return []any{}
-	case "object":
-		return map[string]any{}
-	default:
-		return ""
-	}
-}
-
 func normalizeToolArgs(raw any, schema paramSchema) map[string]any {
 	args := map[string]any{}
 	switch v := raw.(type) {
@@ -251,18 +245,6 @@ func normalizeToolArgs(raw any, schema paramSchema) map[string]any {
 		args = v
 	case string:
 		_ = json.Unmarshal([]byte(v), &args)
-	}
-
-	required := map[string]struct{}{}
-	for _, key := range schema.Required {
-		required[key] = struct{}{}
-	}
-
-	for key := range required {
-		if val, ok := args[key]; !ok || val == nil {
-			info := schema.Properties[key]
-			args[key] = defaultForType(info.Type)
-		}
 	}
 
 	for key, val := range args {
