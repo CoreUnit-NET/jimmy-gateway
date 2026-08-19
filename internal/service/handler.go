@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -143,7 +144,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	result, err := h.completeChat(r)
 	if err != nil {
 		var pe *proxyError
-		if ok := asProxyError(err, &pe); ok {
+		if errors.As(err, &pe) {
 			h.writeOpenAIError(w, pe.message, pe.typ, pe.code, pe.status)
 			return
 		}
@@ -182,10 +183,12 @@ func (h *Handler) authorize(r *http.Request) bool {
 }
 
 func bearerToken(auth string) string {
-	if !strings.HasPrefix(auth, "Bearer ") {
+	const prefix = "Bearer "
+	auth = strings.TrimSpace(auth)
+	if len(auth) < len(prefix) || !strings.EqualFold(auth[:len(prefix)], prefix) {
 		return ""
 	}
-	return strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+	return strings.TrimSpace(auth[len(prefix):])
 }
 
 func (h *Handler) allowedOrigin() string {
@@ -225,8 +228,7 @@ func (h *Handler) writeRaw(w http.ResponseWriter, status int, contentType string
 }
 
 func (h *Handler) writeOpenAIError(w http.ResponseWriter, message, typ, code string, status int) {
-	body, _ := chatjimmy.NewOpenAIError(message, typ, code, status)
-	h.writeJSON(w, status, body)
+	h.writeJSON(w, status, chatjimmy.NewOpenAIError(message, typ, code))
 }
 
 func (h *Handler) writeAnthropicError(w http.ResponseWriter, message, typ string, status int) {
@@ -272,17 +274,6 @@ type proxyError struct {
 
 func (e *proxyError) Error() string {
 	return e.message
-}
-
-func asProxyError(err error, target **proxyError) bool {
-	if err == nil {
-		return false
-	}
-	if pe, ok := err.(*proxyError); ok {
-		*target = pe
-		return true
-	}
-	return false
 }
 
 func badRequest(message string) error {

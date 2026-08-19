@@ -83,6 +83,17 @@ func BuildStreamChunks(completion Completion) []StreamChunk {
 	created := completion.Created
 	model := completion.Model
 	id := completion.ID
+	if len(completion.Choices) == 0 {
+		reason := "stop"
+		return []StreamChunk{{
+			ID: id, Object: "chat.completion.chunk", Created: created, Model: model,
+			Choices: []StreamChunkChoice{{
+				Index:        0,
+				Delta:        StreamChunkDelta{Role: "assistant"},
+				FinishReason: &reason,
+			}},
+		}}
+	}
 	choice := completion.Choices[0]
 	msg := choice.Message
 
@@ -179,10 +190,10 @@ func EncodeSSEChunks(chunks []StreamChunk) []byte {
 	return out
 }
 
-func NewOpenAIError(message, typ, code string, status int) (OpenAIError, int) {
+func NewOpenAIError(message, typ, code string) OpenAIError {
 	err := OpenAIError{}
 	err.Error.Message = message
 	err.Error.Type = typ
 	err.Error.Code = code
-	return err, status
+	return err
 }

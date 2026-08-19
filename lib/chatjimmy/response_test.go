@@ -74,12 +74,22 @@ func TestBuildStreamChunksWithToolCalls(t *testing.T) {
 }
 
 func TestNewOpenAIError(t *testing.T) {
-	body, status := NewOpenAIError("bad", "invalid_request_error", "bad_code", 400)
-	if status != 400 {
-		t.Fatalf("status = %d", status)
-	}
-	if body.Error.Message != "bad" || body.Error.Code != "bad_code" {
+	body := NewOpenAIError("bad", "invalid_request_error", "bad_code")
+	if body.Error.Message != "bad" || body.Error.Type != "invalid_request_error" || body.Error.Code != "bad_code" {
 		t.Fatalf("body = %+v", body)
+	}
+}
+
+func TestBuildStreamChunksEmptyChoices(t *testing.T) {
+	chunks := BuildStreamChunks(Completion{ID: "id", Created: 1, Model: "llama3.1-8B"})
+	if len(chunks) != 1 {
+		t.Fatalf("chunks = %d, want 1", len(chunks))
+	}
+	if chunks[0].Choices[0].FinishReason == nil || *chunks[0].Choices[0].FinishReason != "stop" {
+		t.Fatalf("finish_reason = %#v", chunks[0].Choices[0].FinishReason)
+	}
+	if chunks[0].Choices[0].Delta.Role != "assistant" {
+		t.Fatalf("delta.role = %q", chunks[0].Choices[0].Delta.Role)
 	}
 }
 

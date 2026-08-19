@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -47,35 +48,17 @@ func (h *Handler) completeChat(r *http.Request) (*chatResult, error) {
 		return nil, badRequest("Request body must be JSON")
 	}
 
-	start := time.Now()
-	translated, err := chatjimmy.TranslateRequest(req, h.translateOptions())
-	if err != nil {
-		return nil, badRequest(err.Error())
-	}
-
-	raw, err := h.chatUpstream(r, translated.Payload)
+	completion, err := h.completeFromChatRequest(r, req, "openai")
 	if err != nil {
 		return nil, err
 	}
-
-	tools := translated.Tools
-	if translated.SkipToolParse {
-		tools = nil
-	}
-	parsed := chatjimmy.ParseUpstream(raw)
-	completion := chatjimmy.BuildCompletion(
-		translated.Model,
-		parsed.Text,
-		parsed.Usage,
-		tools,
-		parsed.Stats,
-	)
-	h.logChat("openai", translated.Model, start, translated.SystemTruncated, translated.ToolsCompacted, parsed.Usage)
-
 	return &chatResult{completion: completion, stream: req.Stream}, nil
 }
 
-func (h *Handler) completeFromChatRequest(r *http.Request, req chatjimmy.ChatRequest) (chatjimmy.Completion, error) {
+func (h *Handler) completeFromChatRequest(r *http.Request, req chatjimmy.ChatRequest, kind string) (chatjimmy.Completion, error) {
+	if kind == "" {
+		kind = "adapter"
+	}
 	start := time.Now()
 	translated, err := chatjimmy.TranslateRequest(req, h.translateOptions())
 	if err != nil {
@@ -99,7 +82,7 @@ func (h *Handler) completeFromChatRequest(r *http.Request, req chatjimmy.ChatReq
 		tools,
 		parsed.Stats,
 	)
-	h.logChat("adapter", translated.Model, start, translated.SystemTruncated, translated.ToolsCompacted, parsed.Usage)
+	h.logChat(kind, translated.Model, start, translated.SystemTruncated, translated.ToolsCompacted, parsed.Usage)
 	return completion, nil
 }
 
@@ -107,7 +90,7 @@ func (h *Handler) handleNativeChat(w http.ResponseWriter, r *http.Request) {
 	body, err := readBody(r)
 	if err != nil {
 		var pe *proxyError
-		if asProxyError(err, &pe) {
+		if errors.As(err, &pe) {
 			h.writeOpenAIError(w, pe.message, pe.typ, pe.code, pe.status)
 			return
 		}
@@ -136,7 +119,7 @@ func (h *Handler) handleNativeChat(w http.ResponseWriter, r *http.Request) {
 	raw, err := h.chatUpstream(r, payload)
 	if err != nil {
 		var pe *proxyError
-		if ok := asProxyError(err, &pe); ok {
+		if errors.As(err, &pe) {
 			h.writeOpenAIError(w, pe.message, pe.typ, pe.code, pe.status)
 			return
 		}
@@ -151,7 +134,7 @@ func (h *Handler) handleAnthropicMessages(w http.ResponseWriter, r *http.Request
 	body, err := readBody(r)
 	if err != nil {
 		var pe *proxyError
-		if asProxyError(err, &pe) {
+		if errors.As(err, &pe) {
 			h.writeAnthropicError(w, pe.message, pe.typ, pe.status)
 			return
 		}
@@ -165,10 +148,10 @@ func (h *Handler) handleAnthropicMessages(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	completion, err := h.completeFromChatRequest(r, req)
+	completion, err := h.completeFromChatRequest(r, req, "adapter")
 	if err != nil {
 		var pe *proxyError
-		if ok := asProxyError(err, &pe); ok {
+		if errors.As(err, &pe) {
 			typ := "api_error"
 			if pe.status < 500 {
 				typ = "invalid_request_error"
@@ -192,7 +175,7 @@ func (h *Handler) handleGeminiGenerate(w http.ResponseWriter, r *http.Request, m
 	body, err := readBody(r)
 	if err != nil {
 		var pe *proxyError
-		if asProxyError(err, &pe) {
+		if errors.As(err, &pe) {
 			h.writeGeminiError(w, pe.message, pe.status)
 			return
 		}
@@ -209,10 +192,10 @@ func (h *Handler) handleGeminiGenerate(w http.ResponseWriter, r *http.Request, m
 		req.Stream = true
 	}
 
-	completion, err := h.completeFromChatRequest(r, req)
+	completion, err := h.completeFromChatRequest(r, req, "adapter")
 	if err != nil {
 		var pe *proxyError
-		if ok := asProxyError(err, &pe); ok {
+		if errors.As(err, &pe) {
 			h.writeGeminiError(w, pe.message, pe.status)
 			return
 		}

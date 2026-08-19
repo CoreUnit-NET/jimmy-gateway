@@ -162,6 +162,42 @@ func TestHandlerAuthValid(t *testing.T) {
 	}
 }
 
+func TestBearerToken(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{in: "Bearer secret", want: "secret"},
+		{in: "bearer secret", want: "secret"},
+		{in: "BEARER secret", want: "secret"},
+		{in: "  Bearer   secret  ", want: "secret"},
+		{in: "Bearer", want: ""},
+		{in: "Token secret", want: ""},
+		{in: "", want: ""},
+	}
+	for _, tc := range tests {
+		if got := bearerToken(tc.in); got != tc.want {
+			t.Fatalf("bearerToken(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestHandlerAuthBearerCaseInsensitive(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`ok`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	h := NewHandler(nil, testConfig(), &chatjimmy.Client{URL: upstream.URL})
+	body := strings.NewReader(`{"messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+	req.Header.Set("Authorization", "bearer secret")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHandlerChatCompletionsMergesSystemMessages(t *testing.T) {
 	var upstreamBody map[string]any
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -307,6 +343,42 @@ func TestHandlerChatCompletionsEmptyMessages(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandlerChatCompletionsRejectsN(t *testing.T) {
+	cfg := config.DefaultAppConfigForTest()
+	h := NewHandler(nil, cfg, &chatjimmy.Client{})
+	body := strings.NewReader(`{"n":2,"messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandlerChatCompletionsStreamBoolish(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`Hi there`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	cfg := config.DefaultAppConfigForTest()
+	h := NewHandler(nil, cfg, &chatjimmy.Client{URL: upstream.URL})
+	body := strings.NewReader(`{"stream":"true","messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Header().Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("content-type = %q", rec.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(rec.Body.String(), "data: [DONE]") {
+		t.Fatalf("body = %q", rec.Body.String())
 	}
 }
 
