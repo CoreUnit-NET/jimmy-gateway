@@ -4,28 +4,18 @@ package config
 Package config owns raw CLI flag and environment parsing (cobra).
 
 It maps flags/env into a plain AppConfig struct only — no validation
-beyond parse. Flags override env; missing .env is ignored at main.
+beyond parse. Convert AppConfig into validated Settings via
+internal/settings. Flags override env; missing .env is ignored at main.
 */
 
 import (
 	"fmt"
-	"net/url"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
 
 const helpURL = "https://github.com/CoreUnit-NET/jimmy-gateway"
-
-const (
-	DefaultHost             = "0.0.0.0"
-	DefaultPort             = 8080
-	DefaultAllowedOrigin    = "*"
-	DefaultChatJimmyTimeout = 120
-	DefaultChatJimmyURL     = "https://chatjimmy.ai/api/chat"
-	maxChatJimmyTimeoutSecs = 300
-)
 
 // Known subcommand names captured in AppConfig.Command after ParseConfig.
 const (
@@ -55,21 +45,16 @@ type AppConfig struct {
 	ChatJimmyModels  string
 }
 
-// DefaultAppConfigForTest returns a fresh config with package defaults (tests only).
-func DefaultAppConfigForTest() *AppConfig {
-	return defaultAppConfig()
-}
-
 func defaultAppConfig() *AppConfig {
 	return &AppConfig{
 		Verbose:     false,
 		ShowVersion: false,
 
-		Host:             DefaultHost,
-		Port:             DefaultPort,
-		AllowedOrigin:    DefaultAllowedOrigin,
-		ChatJimmyURL:     DefaultChatJimmyURL,
-		ChatJimmyTimeout: DefaultChatJimmyTimeout,
+		Host:             "0.0.0.0",
+		Port:             8080,
+		AllowedOrigin:    "*",
+		ChatJimmyURL:     "https://chatjimmy.ai/api/chat",
+		ChatJimmyTimeout: 120,
 	}
 }
 
@@ -158,7 +143,7 @@ func loadEnvVars(appConfig *AppConfig) error {
 }
 
 func applyServeFlags(appConfig *AppConfig, cmd *cobra.Command) {
-	// Persistent so bare root and subcommands share one definition (caddy-forward-auth style).
+	// Persistent so bare root and subcommands share one definition (explorer-mcp / caddy-forward-auth style).
 	cmd.PersistentFlags().StringVar(&appConfig.Host, "host", appConfig.Host, "bind host (HOST)")
 	cmd.PersistentFlags().IntVarP(&appConfig.Port, "port", "p", appConfig.Port, "bind port (PORT)")
 	cmd.PersistentFlags().StringVar(&appConfig.APIKey, "api-key", appConfig.APIKey, "optional Bearer key for gateway routes (API_KEY)")
@@ -170,47 +155,8 @@ func applyServeFlags(appConfig *AppConfig, cmd *cobra.Command) {
 	cmd.PersistentFlags().StringVar(&appConfig.ChatJimmyModels, "chatjimmy-models", appConfig.ChatJimmyModels, "extra advertised model ids, CSV (CHATJIMMY_MODELS)")
 }
 
-func (c *AppConfig) Validate() error {
-	if c == nil {
-		return fmt.Errorf("app config is nil")
-	}
-	if strings.TrimSpace(c.Host) == "" {
-		return fmt.Errorf("host must not be empty")
-	}
-	if c.Port < 1 || c.Port > 65535 {
-		return fmt.Errorf("invalid port %d: must be between 1 and 65535", c.Port)
-	}
-	origin := strings.TrimSpace(c.AllowedOrigin)
-	if origin == "" {
-		c.AllowedOrigin = DefaultAllowedOrigin
-	} else {
-		if strings.Contains(origin, ",") || strings.ContainsAny(origin, " \t") {
-			return fmt.Errorf("allowed origin must be a single origin")
-		}
-		if origin != "*" {
-			origin = strings.TrimRight(origin, "/")
-		}
-		c.AllowedOrigin = origin
-	}
-	rawURL := strings.TrimSpace(c.ChatJimmyURL)
-	if rawURL == "" {
-		return fmt.Errorf("chatjimmy url must not be empty")
-	}
-	parsed, err := url.Parse(rawURL)
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return fmt.Errorf("invalid chatjimmy url %q: want http(s) URL", rawURL)
-	}
-	c.ChatJimmyURL = rawURL
-	if c.ChatJimmyTimeout < 1 || c.ChatJimmyTimeout > maxChatJimmyTimeoutSecs {
-		return fmt.Errorf("invalid chatjimmy timeout %d: must be between 1 and %d seconds", c.ChatJimmyTimeout, maxChatJimmyTimeoutSecs)
-	}
-	c.ChatJimmyAPIKey = strings.TrimSpace(c.ChatJimmyAPIKey)
-	c.ChatJimmyModel = strings.TrimSpace(c.ChatJimmyModel)
-	c.ChatJimmyModels = strings.TrimSpace(c.ChatJimmyModels)
-	return nil
-}
-
-// ParseConfig loads env defaults, parses CLI flags/subcommands, and returns the app config.
+// ParseConfig loads env defaults, parses CLI flags/subcommands, and returns the raw app config.
+// It is the loading layer only; interpretation and validation live in the settings package.
 // It returns ErrHelpRequested when the user asked for help (cobra has already printed it).
 // Callers should handle ShowVersion and process exit themselves.
 func ParseConfig(displayName, shortName string) (*AppConfig, error) {
@@ -243,6 +189,7 @@ func ParseConfig(displayName, shortName string) (*AppConfig, error) {
 		serveCommand(appConfig),
 	)
 
+	// Disable cobra's help subcommand so `help` is not a valid command.
 	rootCmd.SetHelpCommand(&cobra.Command{
 		Use:    "",
 		Hidden: true,

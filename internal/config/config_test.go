@@ -35,23 +35,23 @@ func TestParseConfigDefaults(t *testing.T) {
 	if cfg.Verbose {
 		t.Fatal("expected Verbose false by default")
 	}
-	if cfg.Host != DefaultHost {
-		t.Fatalf("Host = %q, want %q", cfg.Host, DefaultHost)
+	if cfg.Host != "0.0.0.0" {
+		t.Fatalf("Host = %q, want 0.0.0.0", cfg.Host)
 	}
-	if cfg.Port != DefaultPort {
-		t.Fatalf("Port = %d, want %d", cfg.Port, DefaultPort)
+	if cfg.Port != 8080 {
+		t.Fatalf("Port = %d, want 8080", cfg.Port)
 	}
 	if cfg.APIKey != "" {
 		t.Fatalf("APIKey = %q, want empty", cfg.APIKey)
 	}
-	if cfg.AllowedOrigin != DefaultAllowedOrigin {
-		t.Fatalf("AllowedOrigin = %q, want %q", cfg.AllowedOrigin, DefaultAllowedOrigin)
+	if cfg.AllowedOrigin != "*" {
+		t.Fatalf("AllowedOrigin = %q, want *", cfg.AllowedOrigin)
 	}
-	if cfg.ChatJimmyURL != DefaultChatJimmyURL {
-		t.Fatalf("ChatJimmyURL = %q, want %q", cfg.ChatJimmyURL, DefaultChatJimmyURL)
+	if cfg.ChatJimmyURL != "https://chatjimmy.ai/api/chat" {
+		t.Fatalf("ChatJimmyURL = %q, want default", cfg.ChatJimmyURL)
 	}
-	if cfg.ChatJimmyTimeout != DefaultChatJimmyTimeout {
-		t.Fatalf("ChatJimmyTimeout = %d, want %d", cfg.ChatJimmyTimeout, DefaultChatJimmyTimeout)
+	if cfg.ChatJimmyTimeout != 120 {
+		t.Fatalf("ChatJimmyTimeout = %d, want 120", cfg.ChatJimmyTimeout)
 	}
 	if cfg.ChatJimmyAPIKey != "" || cfg.ChatJimmyModel != "" || cfg.ChatJimmyModels != "" {
 		t.Fatalf("unexpected chatjimmy extras: key=%q model=%q models=%q", cfg.ChatJimmyAPIKey, cfg.ChatJimmyModel, cfg.ChatJimmyModels)
@@ -236,109 +236,6 @@ func TestParseConfigVersionSubcommand(t *testing.T) {
 	if !cfg.ShowVersion {
 		t.Fatal("expected ShowVersion true")
 	}
-}
-
-func TestAppConfigValidate(t *testing.T) {
-	t.Run("valid defaults", func(t *testing.T) {
-		cfg := defaultAppConfig()
-		if err := cfg.Validate(); err != nil {
-			t.Fatalf("Validate: %v", err)
-		}
-	})
-
-	t.Run("invalid port", func(t *testing.T) {
-		cfg := defaultAppConfig()
-		cfg.Port = 0
-		if err := cfg.Validate(); err == nil {
-			t.Fatal("expected error for port 0")
-		}
-	})
-
-	t.Run("empty host", func(t *testing.T) {
-		cfg := defaultAppConfig()
-		cfg.Host = "   "
-		if err := cfg.Validate(); err == nil {
-			t.Fatal("expected error for empty host")
-		}
-	})
-
-	t.Run("invalid chatjimmy url", func(t *testing.T) {
-		cfg := defaultAppConfig()
-		cfg.ChatJimmyURL = "not-a-url"
-		if err := cfg.Validate(); err == nil {
-			t.Fatal("expected error for invalid url")
-		}
-	})
-
-	t.Run("empty chatjimmy url", func(t *testing.T) {
-		cfg := defaultAppConfig()
-		cfg.ChatJimmyURL = "  "
-		if err := cfg.Validate(); err == nil {
-			t.Fatal("expected error for empty url")
-		}
-	})
-
-	t.Run("timeout bounds", func(t *testing.T) {
-		cfg := defaultAppConfig()
-		cfg.ChatJimmyTimeout = 0
-		if err := cfg.Validate(); err == nil {
-			t.Fatal("expected error for timeout 0")
-		}
-		cfg = defaultAppConfig()
-		cfg.ChatJimmyTimeout = 301
-		if err := cfg.Validate(); err == nil {
-			t.Fatal("expected error for timeout 301")
-		}
-	})
-
-	t.Run("empty origin becomes default", func(t *testing.T) {
-		cfg := defaultAppConfig()
-		cfg.AllowedOrigin = "  "
-		if err := cfg.Validate(); err != nil {
-			t.Fatalf("Validate: %v", err)
-		}
-		if cfg.AllowedOrigin != DefaultAllowedOrigin {
-			t.Fatalf("AllowedOrigin = %q, want %q", cfg.AllowedOrigin, DefaultAllowedOrigin)
-		}
-	})
-
-	t.Run("comma origin rejected", func(t *testing.T) {
-		cfg := defaultAppConfig()
-		cfg.AllowedOrigin = "https://a.example,https://b.example"
-		if err := cfg.Validate(); err == nil {
-			t.Fatal("expected error for comma origin")
-		}
-	})
-
-	t.Run("whitespace origin rejected", func(t *testing.T) {
-		cfg := defaultAppConfig()
-		cfg.AllowedOrigin = "https://a.example https://b.example"
-		if err := cfg.Validate(); err == nil {
-			t.Fatal("expected error for whitespace origin")
-		}
-	})
-
-	t.Run("trailing slash trimmed", func(t *testing.T) {
-		cfg := defaultAppConfig()
-		cfg.AllowedOrigin = "https://app.example/"
-		if err := cfg.Validate(); err != nil {
-			t.Fatalf("Validate: %v", err)
-		}
-		if cfg.AllowedOrigin != "https://app.example" {
-			t.Fatalf("AllowedOrigin = %q", cfg.AllowedOrigin)
-		}
-	})
-
-	t.Run("star origin kept", func(t *testing.T) {
-		cfg := defaultAppConfig()
-		cfg.AllowedOrigin = "*"
-		if err := cfg.Validate(); err != nil {
-			t.Fatalf("Validate: %v", err)
-		}
-		if cfg.AllowedOrigin != "*" {
-			t.Fatalf("AllowedOrigin = %q", cfg.AllowedOrigin)
-		}
-	})
 }
 
 func TestParseConfigHelpRequested(t *testing.T) {
