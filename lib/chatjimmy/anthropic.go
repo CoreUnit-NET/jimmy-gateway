@@ -71,7 +71,7 @@ func AnthropicToChatRequest(raw []byte) (ChatRequest, error) {
 	}
 
 	var incoming []json.RawMessage
-	if len(req.Messages) > 0 && string(req.Messages) != "null" {
+	if !isEmptyJSON(req.Messages) {
 		if err := json.Unmarshal(req.Messages, &incoming); err != nil {
 			return ChatRequest{}, fmt.Errorf("messages must be a non-empty array")
 		}
@@ -231,7 +231,7 @@ func appendAnthropicEvent(out []byte, event string, payload any) []byte {
 }
 
 func anthropicSystemText(raw json.RawMessage) string {
-	if len(raw) == 0 || string(raw) == "null" {
+	if isEmptyJSON(raw) {
 		return ""
 	}
 	var s string
@@ -252,7 +252,7 @@ func anthropicSystemText(raw json.RawMessage) string {
 }
 
 func anthropicTools(raw json.RawMessage) []Tool {
-	if len(raw) == 0 || string(raw) == "null" {
+	if isEmptyJSON(raw) {
 		return nil
 	}
 	var tools []struct {
@@ -281,7 +281,7 @@ func anthropicTools(raw json.RawMessage) []Tool {
 }
 
 func anthropicToolChoice(raw json.RawMessage) json.RawMessage {
-	if len(raw) == 0 || string(raw) == "null" {
+	if isEmptyJSON(raw) {
 		return nil
 	}
 	var s string
@@ -360,7 +360,7 @@ func anthropicMessages(raw json.RawMessage) ([]Message, error) {
 			name := rawString(block["name"])
 			id := rawString(block["id"])
 			args := block["input"]
-			if len(args) == 0 {
+			if isEmptyJSON(args) {
 				args = json.RawMessage(`{}`)
 			}
 			out = append(out, Message{
@@ -404,7 +404,7 @@ func anthropicMessages(raw json.RawMessage) ([]Message, error) {
 }
 
 func anthropicToolResultContent(raw json.RawMessage) string {
-	if len(raw) == 0 || string(raw) == "null" {
+	if isEmptyJSON(raw) {
 		return ""
 	}
 	var s string
@@ -446,7 +446,7 @@ func anthropicImagePart(source json.RawMessage) json.RawMessage {
 }
 
 func rawString(raw json.RawMessage) string {
-	if len(raw) == 0 {
+	if isEmptyJSON(raw) {
 		return ""
 	}
 	var s string
@@ -454,12 +454,4 @@ func rawString(raw json.RawMessage) string {
 		return s
 	}
 	return strings.Trim(string(raw), `"`)
-}
-
-func mustJSON(v any) json.RawMessage {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return json.RawMessage(`""`)
-	}
-	return b
 }

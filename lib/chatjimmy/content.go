@@ -11,7 +11,7 @@ func ContentToText(raw json.RawMessage) string {
 }
 
 func ParseContent(raw json.RawMessage) (string, *Attachment) {
-	if len(raw) == 0 || string(raw) == "null" {
+	if isEmptyJSON(raw) {
 		return "", nil
 	}
 

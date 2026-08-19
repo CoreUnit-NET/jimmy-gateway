@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -104,7 +105,7 @@ type propertySchema struct {
 }
 
 func parseParameters(raw json.RawMessage) paramSchema {
-	if len(raw) == 0 {
+	if isEmptyJSON(raw) {
 		return paramSchema{}
 	}
 	var schema paramSchema
@@ -117,8 +118,14 @@ func formatSignature(schema paramSchema) string {
 	for _, name := range schema.Required {
 		required[name] = struct{}{}
 	}
-	parts := make([]string, 0, len(schema.Properties))
-	for name, info := range schema.Properties {
+	names := make([]string, 0, len(schema.Properties))
+	for name := range schema.Properties {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		info := schema.Properties[name]
 		opt := ""
 		if _, ok := required[name]; !ok {
 			opt = "?"
@@ -181,7 +188,7 @@ func compactToolSchemas(tools []Tool) string {
 }
 
 func parseToolChoice(raw json.RawMessage) string {
-	if len(raw) == 0 || string(raw) == "null" {
+	if isEmptyJSON(raw) {
 		return "auto"
 	}
 	var s string
@@ -237,7 +244,7 @@ func defaultForType(typ string) any {
 	}
 }
 
-func normalizeToolArgs(name string, raw any, schema paramSchema) map[string]any {
+func normalizeToolArgs(raw any, schema paramSchema) map[string]any {
 	args := map[string]any{}
 	switch v := raw.(type) {
 	case map[string]any:
@@ -265,7 +272,6 @@ func normalizeToolArgs(name string, raw any, schema paramSchema) map[string]any 
 		}
 		args[key] = coerceType(val, info.Type)
 	}
-	_ = name
 	return args
 }
 
@@ -367,7 +373,7 @@ func ParseToolCalls(content string, tools []Tool, newID func() string) (string, 
 				continue
 			}
 			args := callArguments(item)
-			normalized := normalizeToolArgs(name, args, index[name])
+			normalized := normalizeToolArgs(args, index[name])
 			argsJSON, _ := json.Marshal(normalized)
 			calls = append(calls, ToolCall{
 				ID:   newID(),

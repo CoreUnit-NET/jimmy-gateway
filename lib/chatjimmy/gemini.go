@@ -154,8 +154,11 @@ func CompletionToGemini(completion Completion) GeminiResponse {
 	}
 
 	finish := "STOP"
-	if choice.FinishReason == "length" {
+	switch choice.FinishReason {
+	case "length":
 		finish = "MAX_TOKENS"
+	case "tool_calls":
+		finish = "STOP"
 	}
 
 	return GeminiResponse{
@@ -179,7 +182,7 @@ func EncodeGeminiSSE(resp GeminiResponse) []byte {
 }
 
 func geminiTools(raw json.RawMessage) []Tool {
-	if len(raw) == 0 || string(raw) == "null" {
+	if isEmptyJSON(raw) {
 		return nil
 	}
 	var groups []struct {

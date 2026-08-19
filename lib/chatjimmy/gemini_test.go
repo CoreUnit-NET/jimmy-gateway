@@ -82,6 +82,53 @@ func TestCompletionToGemini(t *testing.T) {
 	}
 }
 
+func TestCompletionToGeminiToolCallsStop(t *testing.T) {
+	completion := Completion{
+		Model: "gemini-1.5-flash",
+		Choices: []CompletionChoice{{
+			FinishReason: "tool_calls",
+			Message: AssistantMessage{
+				Role: "assistant",
+				ToolCalls: []ToolCall{{
+					ID:   "call_1",
+					Type: "function",
+					Function: ToolCallFunction{
+						Name:      "read",
+						Arguments: `{"path":"x"}`,
+					},
+				}},
+			},
+		}},
+	}
+	resp := CompletionToGemini(completion)
+	if len(resp.Candidates) != 1 {
+		t.Fatalf("candidates = %+v", resp.Candidates)
+	}
+	if resp.Candidates[0].FinishReason != "STOP" {
+		t.Fatalf("finishReason = %q, want STOP", resp.Candidates[0].FinishReason)
+	}
+	part := resp.Candidates[0].Content.Parts[0]
+	if part.FunctionCall == nil || part.FunctionCall.Name != "read" {
+		t.Fatalf("functionCall = %+v", part.FunctionCall)
+	}
+}
+
+func TestGeminiToChatRequestNullTools(t *testing.T) {
+	tests := []string{
+		`{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":null}`,
+		`{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":  null  }`,
+	}
+	for _, raw := range tests {
+		req, err := GeminiToChatRequest("gemini-1.5-flash", []byte(raw))
+		if err != nil {
+			t.Fatalf("GeminiToChatRequest(%s): %v", raw, err)
+		}
+		if req.Tools != nil {
+			t.Fatalf("tools = %+v, want nil for %s", req.Tools, raw)
+		}
+	}
+}
+
 func TestGeminiToChatRequestRejectsEmptyContents(t *testing.T) {
 	_, err := GeminiToChatRequest("gemini-1.5-flash", []byte(`{"contents":[]}`))
 	if err == nil {

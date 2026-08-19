@@ -186,6 +186,37 @@ func TestAnthropicToChatRequestRejectsEmptyMessages(t *testing.T) {
 	}
 }
 
+func TestAnthropicToChatRequestNullMessages(t *testing.T) {
+	_, err := AnthropicToChatRequest([]byte(`{"model":"x","max_tokens":1,"messages":null}`))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestAnthropicToChatRequestNullFields(t *testing.T) {
+	raw := []byte(`{
+		"model":"claude-3-haiku-20240307",
+		"max_tokens":32,
+		"system":  null,
+		"tools":null,
+		"tool_choice": null ,
+		"messages":[{"role":"user","content":"hi"}]
+	}`)
+	req, err := AnthropicToChatRequest(raw)
+	if err != nil {
+		t.Fatalf("AnthropicToChatRequest: %v", err)
+	}
+	if req.Tools != nil {
+		t.Fatalf("tools = %+v, want nil", req.Tools)
+	}
+	if req.ToolChoice != nil {
+		t.Fatalf("tool_choice = %s, want nil", req.ToolChoice)
+	}
+	if len(req.Messages) != 1 || req.Messages[0].Role != "user" {
+		t.Fatalf("messages = %+v", req.Messages)
+	}
+}
+
 func TestNewAnthropicError(t *testing.T) {
 	body := NewAnthropicError("nope", "")
 	raw, _ := json.Marshal(body)
