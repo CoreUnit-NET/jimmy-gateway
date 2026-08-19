@@ -34,10 +34,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := resolvePath(r.URL.Path)
 	sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 
-	if h.settings != nil && h.settings.Verbose {
-		h.logger.Printf("%s %s", r.Method, path)
-	}
-
 	if r.Method == http.MethodOptions {
 		h.writeCORS(sw)
 		sw.WriteHeader(http.StatusNoContent)
@@ -249,7 +245,7 @@ func (h *Handler) writeSSE(w http.ResponseWriter, payload []byte) {
 }
 
 func (h *Handler) logRequest(method, path string, status int, start time.Time) {
-	if h.settings == nil || !h.settings.Verbose || h.logger == nil {
+	if h.logger == nil {
 		return
 	}
 	h.logger.Printf("%s %s status=%d duration=%s", method, path, status, time.Since(start).Round(time.Millisecond))

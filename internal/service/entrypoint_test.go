@@ -62,6 +62,18 @@ func TestHandlerHealth(t *testing.T) {
 	}
 }
 
+func TestHandlerAccessLogAlways(t *testing.T) {
+	var buf bytes.Buffer
+	h := NewHandler(log.New(&buf, "", 0), testSettings(), &chatjimmy.Client{})
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	got := buf.String()
+	if !strings.Contains(got, "GET /health status=200") {
+		t.Fatalf("log = %q, want access log", got)
+	}
+}
+
 func TestHandlerHealthAlias(t *testing.T) {
 	h := NewHandler(nil, testConfig(), &chatjimmy.Client{})
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)

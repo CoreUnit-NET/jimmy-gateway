@@ -56,7 +56,8 @@ ChatJimmy currently exposes a single public chat endpoint and no native function
 - **CORS:** OPTIONS and JSON/SSE responses send `Access-Control-Allow-Origin` from `ALLOWED_ORIGIN` (default `*`). A non-wildcard origin also sets `Vary: Origin`. Allow-headers include `x-api-key`.
 - **Buffered streaming:** Upstream responses are buffered first, then emitted as SSE so clients still get protocol-shaped stream chunks (including tool-call deltas after the full XML is parsed).
 - **Retries:** Network / 408 / 429 / 5xx retry up to 3 extra times with 1s/2s/4s backoff (cap 10s), honoring `Retry-After`. An empty ChatJimmy body is retried once without consuming that budget.
-- **Verbose logs:** `-b` / `VERBOSE` logs method, path, status, duration, truncation, compaction, and token usage.
+- **Access logs:** Every request logs method, path, status, and duration.
+- **Verbose logs:** `-b` / `VERBOSE` additionally logs truncation, compaction, and per-chat token usage/latency.
 
 </details>
 
@@ -246,7 +247,7 @@ A `.env` file in the working directory is loaded at startup when present (missin
 - `HOST` or `--host`: bind host, defaults to `0.0.0.0`
 - `PORT` or `-p` / `--port`: bind port, defaults to `8080`
 - `API_KEY` or `--api-key`: optional gateway key for chat routes. Clients may send `Authorization: Bearer …`, `x-api-key`, or `x-goog-api-key`. `OPENAI_API_KEY` is used when `API_KEY` is empty. Off by default.
-- `VERBOSE` or `-b` / `--verbose`: log method, path, status, duration, truncation, compaction, and token usage. Defaults to `false`.
+- `VERBOSE` or `-b` / `--verbose`: additionally log truncation, compaction, and per-chat token usage/latency. Access logs are always on. Defaults to `false`.
 - `ALLOWED_ORIGIN` or `--allowed-origin`: CORS `Access-Control-Allow-Origin`. Defaults to `*`. A non-wildcard value also sets `Vary: Origin`.
 - `CHATJIMMY_URL` or `--chatjimmy-url`: upstream chat URL. Defaults to `https://chatjimmy.ai/api/chat`. Must be `http` or `https`.
 - `CHATJIMMY_TIMEOUT` or `--chatjimmy-timeout`: upstream timeout in seconds (1–300). Defaults to `120`.
@@ -356,7 +357,7 @@ Auto-reload with Air:
 make dev
 ```
 
-Run in Docker with Air (uses `compose.yml`):
+Run in Docker with Air (uses `compose.yml`; host `PORT` from `.env` maps to container `8080`):
 
 ```sh
 make docker/dev
