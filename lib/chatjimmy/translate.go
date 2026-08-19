@@ -24,6 +24,9 @@ type TranslateResult struct {
 }
 
 func TranslateRequest(req ChatRequest, opts TranslateOptions) (TranslateResult, error) {
+	if req.N != nil && *req.N != 1 {
+		return TranslateResult{}, fmt.Errorf("n must be 1")
+	}
 	if len(req.Messages) == 0 {
 		return TranslateResult{}, fmt.Errorf("messages must be a non-empty array")
 	}
@@ -45,10 +48,7 @@ func TranslateRequest(req ChatRequest, opts TranslateOptions) (TranslateResult, 
 	var attachment *Attachment
 
 	for _, msg := range req.Messages {
-		role := strings.TrimSpace(msg.Role)
-		if role == "" {
-			role = "user"
-		}
+		role := normalizeRole(msg.Role)
 		content, partAtt := ParseContent(msg.Content)
 		if attachment == nil && partAtt != nil {
 			attachment = partAtt
@@ -130,7 +130,7 @@ func TranslateRequest(req ChatRequest, opts TranslateOptions) (TranslateResult, 
 		truncated = true
 	}
 
-	options := UpstreamOptions{
+	options := ChatOptions{
 		SelectedModel: MapModel(responseModel),
 		SystemPrompt:  systemPrompt,
 		TopK:          resolveTopK(req),
@@ -213,15 +213,30 @@ func resolveTopP(req ChatRequest) *float64 {
 }
 
 func resolveMaxTokens(req ChatRequest) *int {
-	if req.MaxTokens != nil && *req.MaxTokens >= 1 {
-		v := *req.MaxTokens
-		return &v
+	for _, v := range []*int{req.MaxTokens, req.MaxCompletionTokens} {
+		if v != nil && *v >= 1 {
+			n := *v
+			return &n
+		}
 	}
 	if req.ChatOptions != nil && req.ChatOptions.MaxTokens != nil && *req.ChatOptions.MaxTokens >= 1 {
 		v := *req.ChatOptions.MaxTokens
 		return &v
 	}
 	return nil
+}
+
+func normalizeRole(role string) string {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "system", "developer":
+		return "system"
+	case "assistant":
+		return "assistant"
+	case "tool", "function":
+		return "tool"
+	default:
+		return "user"
+	}
 }
 
 func resolveStop(req ChatRequest) []string {
@@ -235,7 +250,7 @@ func resolveStop(req ChatRequest) []string {
 }
 
 func parseStop(raw json.RawMessage) []string {
-	if len(raw) == 0 || string(raw) == "null" {
+	if isEmptyJSON(raw) {
 		return nil
 	}
 	var s string

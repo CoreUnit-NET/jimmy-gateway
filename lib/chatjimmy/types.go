@@ -19,21 +19,28 @@ var FilteredTools = map[string]struct{}{
 }
 
 type ChatRequest struct {
-	Model       string          `json:"model"`
-	Messages    []Message       `json:"messages"`
-	Stream      bool            `json:"stream"`
-	Tools       []Tool          `json:"tools,omitempty"`
-	ToolChoice  json.RawMessage `json:"tool_choice,omitempty"`
-	Temperature *float64        `json:"temperature,omitempty"`
-	TopP        *float64        `json:"top_p,omitempty"`
-	TopK        *int            `json:"top_k,omitempty"`
-	TopKCamel   *int            `json:"topK,omitempty"`
-	MaxTokens   *int            `json:"max_tokens,omitempty"`
-	Stop        json.RawMessage `json:"stop,omitempty"`
-	ChatOptions *NativeOptions  `json:"chatOptions,omitempty"`
+	Model               string          `json:"model"`
+	Messages            []Message       `json:"messages"`
+	Stream              bool            `json:"stream"`
+	Tools               []Tool          `json:"tools,omitempty"`
+	ToolChoice          json.RawMessage `json:"tool_choice,omitempty"`
+	Temperature         *float64        `json:"temperature,omitempty"`
+	TopP                *float64        `json:"top_p,omitempty"`
+	TopK                *int            `json:"top_k,omitempty"`
+	TopKCamel           *int            `json:"topK,omitempty"`
+	MaxTokens           *int            `json:"max_tokens,omitempty"`
+	MaxCompletionTokens *int            `json:"max_completion_tokens,omitempty"`
+	Stop                json.RawMessage `json:"stop,omitempty"`
+	N                   *int            `json:"n,omitempty"`
+	StreamOptions       *StreamOptions  `json:"stream_options,omitempty"`
+	ChatOptions         *ChatOptions    `json:"chatOptions,omitempty"`
 }
 
-type NativeOptions struct {
+type StreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
+}
+
+type ChatOptions struct {
 	SelectedModel string   `json:"selectedModel"`
 	SystemPrompt  string   `json:"systemPrompt"`
 	TopK          int      `json:"topK"`
@@ -77,24 +84,13 @@ type ToolCallFunction struct {
 
 type UpstreamPayload struct {
 	Messages    []UpstreamMessage `json:"messages"`
-	ChatOptions UpstreamOptions   `json:"chatOptions"`
+	ChatOptions ChatOptions       `json:"chatOptions"`
 	Attachment  *Attachment       `json:"attachment"`
 }
 
 type UpstreamMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
-}
-
-type UpstreamOptions struct {
-	SelectedModel string   `json:"selectedModel"`
-	SystemPrompt  string   `json:"systemPrompt"`
-	TopK          int      `json:"topK"`
-	Temperature   *float64 `json:"temperature,omitempty"`
-	TopP          *float64 `json:"topP,omitempty"`
-	MaxTokens     *int     `json:"maxTokens,omitempty"`
-	StopSequences []string `json:"stopSequences,omitempty"`
-	Stream        bool     `json:"stream,omitempty"`
 }
 
 type Attachment struct {
@@ -138,6 +134,7 @@ type StreamChunk struct {
 	Created int64               `json:"created"`
 	Model   string              `json:"model"`
 	Choices []StreamChunkChoice `json:"choices"`
+	Usage   *Usage              `json:"usage,omitempty"`
 }
 
 type StreamChunkChoice struct {

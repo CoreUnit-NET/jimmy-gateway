@@ -287,6 +287,115 @@ func TestTranslateRequestInjectToolsIntoSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestNormalizeRole(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"SYSTEM", "system"},
+		{" developer ", "system"},
+		{"Assistant", "assistant"},
+		{"function", "tool"},
+		{"TOOL", "tool"},
+		{"", "user"},
+		{"human", "user"},
+	}
+	for _, tc := range tests {
+		if got := normalizeRole(tc.in); got != tc.want {
+			t.Fatalf("normalizeRole(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestTranslateRequestMaxCompletionTokens(t *testing.T) {
+	n := 32
+	req := ChatRequest{
+		Messages:            []Message{{Role: "user", Content: json.RawMessage(`"hi"`)}},
+		MaxCompletionTokens: &n,
+	}
+	out, err := TranslateRequest(req, TranslateOptions{})
+	if err != nil {
+		t.Fatalf("TranslateRequest: %v", err)
+	}
+	if out.Payload.ChatOptions.MaxTokens == nil || *out.Payload.ChatOptions.MaxTokens != 32 {
+		t.Fatalf("maxTokens = %#v, want 32", out.Payload.ChatOptions.MaxTokens)
+	}
+}
+
+func TestTranslateRequestMaxTokensPrefersMaxTokens(t *testing.T) {
+	maxTokens, maxCompletion, fromOptions := 8, 32, 64
+	req := ChatRequest{
+		Messages:            []Message{{Role: "user", Content: json.RawMessage(`"hi"`)}},
+		MaxTokens:           &maxTokens,
+		MaxCompletionTokens: &maxCompletion,
+		ChatOptions:         &ChatOptions{MaxTokens: &fromOptions},
+	}
+	out, err := TranslateRequest(req, TranslateOptions{})
+	if err != nil {
+		t.Fatalf("TranslateRequest: %v", err)
+	}
+	if out.Payload.ChatOptions.MaxTokens == nil || *out.Payload.ChatOptions.MaxTokens != 8 {
+		t.Fatalf("maxTokens = %#v, want 8", out.Payload.ChatOptions.MaxTokens)
+	}
+}
+
+func TestTranslateRequestStreamFromChatOptions(t *testing.T) {
+	req := ChatRequest{
+		Messages:    []Message{{Role: "user", Content: json.RawMessage(`"hi"`)}},
+		ChatOptions: &ChatOptions{Stream: true},
+	}
+	out, err := TranslateRequest(req, TranslateOptions{})
+	if err != nil {
+		t.Fatalf("TranslateRequest: %v", err)
+	}
+	if !out.Payload.ChatOptions.Stream {
+		t.Fatal("expected chatOptions.stream fallback")
+	}
+}
+
+func TestTranslateRequestRejectsNNotOne(t *testing.T) {
+	n := 2
+	req := ChatRequest{
+		Messages: []Message{{Role: "user", Content: json.RawMessage(`"hi"`)}},
+		N:        &n,
+	}
+	_, err := TranslateRequest(req, TranslateOptions{})
+	if err == nil {
+		t.Fatal("expected error for n != 1")
+	}
+}
+
+func TestParseStop(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  json.RawMessage
+		want []string
+	}{
+		{name: "nil"},
+		{name: "null", raw: json.RawMessage("null")},
+		{name: "padded null", raw: json.RawMessage("  null  ")},
+		{name: "empty string", raw: json.RawMessage(`""`)},
+		{name: "whitespace string", raw: json.RawMessage(`"  "`)},
+		{name: "string", raw: json.RawMessage(`"STOP"`), want: []string{"STOP"}},
+		{name: "array", raw: json.RawMessage(`["a",""," b "]`), want: []string{"a", "b"}},
+		{name: "empty array", raw: json.RawMessage(`[]`)},
+		{name: "object", raw: json.RawMessage(`{}`)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseStop(tc.raw)
+			if len(got) != len(tc.want) {
+				t.Fatalf("parseStop(%q) = %#v, want %#v", tc.raw, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("parseStop(%q) = %#v, want %#v", tc.raw, got, tc.want)
+				}
+			}
+		})
+	}
+}
+
 func TestTranslateRequestOnlySystemMessagesError(t *testing.T) {
 	req := ChatRequest{
 		Messages: []Message{

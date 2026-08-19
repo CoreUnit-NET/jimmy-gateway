@@ -29,7 +29,7 @@ func TestTranslateRequestModel(t *testing.T) {
 			name: "chatOptions selectedModel",
 			req: chatjimmy.ChatRequest{
 				Messages:    userMessages(),
-				ChatOptions: &chatjimmy.NativeOptions{SelectedModel: "from-options"},
+				ChatOptions: &chatjimmy.ChatOptions{SelectedModel: "from-options"},
 			},
 			want: "from-options",
 		},
@@ -64,7 +64,7 @@ func TestTranslateRequestTopKPrecedence(t *testing.T) {
 				Messages:    userMessages(),
 				TopK:        intPtr(4),
 				TopKCamel:   intPtr(12),
-				ChatOptions: &chatjimmy.NativeOptions{TopK: 99},
+				ChatOptions: &chatjimmy.ChatOptions{TopK: 99},
 			},
 			want: 4,
 		},
@@ -80,7 +80,7 @@ func TestTranslateRequestTopKPrecedence(t *testing.T) {
 			name: "chatOptions topK",
 			req: chatjimmy.ChatRequest{
 				Messages:    userMessages(),
-				ChatOptions: &chatjimmy.NativeOptions{TopK: 99},
+				ChatOptions: &chatjimmy.ChatOptions{TopK: 99},
 			},
 			want: 99,
 		},
