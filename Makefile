@@ -209,10 +209,13 @@ dev: ##@ runs the app in watch mode
 ##@ Docker targets
 ##@
 
+# docker compose run -it fails when stdin is not a TTY (CI, agent shells, etc.).
+DOCKER_RUN_TTY := $(shell test -t 0 && echo -it)
+
 .PHONY: docker
 docker: ##@ runs a shell in the container
 	@docker rm -f dev-$(PROJECT_SHORT_NAME) > /dev/null 2>&1 || true
-	docker compose run -P --rm -it --build --service-ports \
+	docker compose run -P --rm $(DOCKER_RUN_TTY) --build --service-ports \
 		--name dev-$(PROJECT_SHORT_NAME) \
 		-e INIT_CMD="bash" \
 		local
@@ -220,13 +223,9 @@ docker: ##@ runs a shell in the container
 .PHONY: docker/dev
 docker/dev: ##@ runs app in docker via air
 	@docker rm -f dev-$(PROJECT_SHORT_NAME) > /dev/null 2>&1 || true
-	docker compose run --rm -it --build --service-ports \
-		--name dev-$(PROJECT_SHORT_NAME) \
-		local
+	docker compose up --build --remove-orphans local
 
 .PHONY: docker/deploy
 docker/deploy: ##@ runs app in docker in a fresh environment
 	@docker rm -f dev-$(PROJECT_SHORT_NAME) > /dev/null 2>&1 || true
-	docker compose run --rm -it --build --service-ports \
-		--name dev-$(PROJECT_SHORT_NAME) \
-		deploy
+	docker compose up --build --remove-orphans deploy

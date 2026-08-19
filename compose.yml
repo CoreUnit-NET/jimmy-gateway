@@ -10,6 +10,9 @@ services:
       GOCACHE: "/cache/go-build"
       GOMODCACHE: "/cache/pkg/mod"
       INIT_CMD: "air"
+      # App must listen on the container-side publish port (8080). Host PORT from
+      # .env only controls the published host mapping above.
+      PORT: "8080"
     volumes:
       - ".:/app"
       - "./tmp/cache:/cache"
@@ -31,6 +34,10 @@ services:
     ports:
       - "0.0.0.0:${PORT:-8080}:8080"
     env_file: ".env"
+    environment:
+      # App must listen on the container-side publish port (8080). Host PORT from
+      # .env only controls the published host mapping above.
+      PORT: "8080"
     volumes:
       - "./data:/app/data"
     user: "1000:1000"
