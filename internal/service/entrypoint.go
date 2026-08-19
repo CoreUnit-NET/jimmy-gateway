@@ -19,7 +19,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/CoreUnit-NET/jimmy-gateway/internal/config"
+	"github.com/CoreUnit-NET/jimmy-gateway/internal/settings"
 	"github.com/CoreUnit-NET/jimmy-gateway/lib/chatjimmy"
 )
 
@@ -29,14 +29,14 @@ type RunOptions struct {
 	ShortName   string
 	DisplayName string
 	Version     string
-	Config      *config.AppConfig
+	Settings    *settings.Settings
 }
 
 // Run starts the OpenAI-compatible ChatJimmy HTTP proxy until interrupted.
 func Run(opts RunOptions) error {
-	cfg := opts.Config
-	if cfg == nil {
-		return fmt.Errorf("app config is nil")
+	s := opts.Settings
+	if s == nil {
+		return fmt.Errorf("settings is nil")
 	}
 
 	logger := opts.Logger
@@ -52,11 +52,8 @@ func Run(opts RunOptions) error {
 		displayName = "jimmy-gateway"
 	}
 
-	timeout := time.Duration(cfg.ChatJimmyTimeout) * time.Second
-	if timeout <= 0 {
-		timeout = time.Duration(config.DefaultChatJimmyTimeout) * time.Second
-	}
-	upstreamURL := strings.TrimSpace(cfg.ChatJimmyURL)
+	timeout := s.UpstreamTimeout()
+	upstreamURL := s.ChatJimmyURL
 	if upstreamURL == "" {
 		upstreamURL = chatjimmy.DefaultUpstreamURL
 	}
@@ -65,13 +62,13 @@ func Run(opts RunOptions) error {
 		HTTP:         &http.Client{Timeout: timeout},
 		URL:          upstreamURL,
 		Timeout:      timeout,
-		APIKey:       cfg.ChatJimmyAPIKey,
+		APIKey:       s.ChatJimmyAPIKey,
 		MaxRetries:   chatjimmy.DefaultMaxRetries,
 		RetryBackoff: time.Second,
 	}
-	handler := NewHandler(logger, cfg, client)
+	handler := NewHandler(logger, s, client)
 
-	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+	addr := fmt.Sprintf("%s:%d", s.Host, s.Port)
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           handler,
@@ -82,7 +79,7 @@ func Run(opts RunOptions) error {
 	}
 
 	authMode := "off"
-	if strings.TrimSpace(cfg.APIKey) != "" {
+	if s.APIKey != "" {
 		authMode = "bearer"
 	}
 
@@ -96,7 +93,7 @@ func Run(opts RunOptions) error {
 		version,
 		addr,
 		authMode,
-		cfg.AllowedOrigin,
+		s.AllowedOrigin,
 		upstreamURL,
 	)
 

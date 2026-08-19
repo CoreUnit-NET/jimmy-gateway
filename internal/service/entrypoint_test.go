@@ -12,18 +12,33 @@ import (
 	"time"
 
 	"github.com/CoreUnit-NET/jimmy-gateway/internal/config"
+	"github.com/CoreUnit-NET/jimmy-gateway/internal/settings"
 	"github.com/CoreUnit-NET/jimmy-gateway/lib/chatjimmy"
 )
 
-func testConfig() *config.AppConfig {
-	cfg := config.DefaultAppConfigForTest()
-	cfg.APIKey = "secret"
-	return cfg
+func testSettings() *settings.Settings {
+	s, err := settings.FromAppConfig(&config.AppConfig{
+		Host:             "0.0.0.0",
+		Port:             8080,
+		AllowedOrigin:    "*",
+		ChatJimmyURL:     "https://chatjimmy.ai/api/chat",
+		ChatJimmyTimeout: 120,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
+
+func testConfig() *settings.Settings {
+	s := testSettings()
+	s.APIKey = "secret"
+	return s
 }
 
 func TestLogChatCompactionAlways(t *testing.T) {
 	var buf bytes.Buffer
-	h := NewHandler(log.New(&buf, "", 0), config.DefaultAppConfigForTest(), &chatjimmy.Client{})
+	h := NewHandler(log.New(&buf, "", 0), testSettings(), &chatjimmy.Client{})
 	h.logChat("openai", chatjimmy.DefaultModel, time.Now(), true, true, chatjimmy.Usage{})
 	got := buf.String()
 	if !strings.Contains(got, "dropped tools JSON") {
@@ -207,7 +222,7 @@ func TestHandlerChatCompletionsMergesSystemMessages(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	cfg := config.DefaultAppConfigForTest()
+	cfg := testSettings()
 	h := NewHandler(nil, cfg, &chatjimmy.Client{URL: upstream.URL})
 	body := strings.NewReader(`{
 		"messages":[
@@ -291,7 +306,7 @@ func TestHandlerChatCompletionsStream(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	cfg := config.DefaultAppConfigForTest()
+	cfg := testSettings()
 	client := &chatjimmy.Client{URL: upstream.URL}
 	h := NewHandler(nil, cfg, client)
 
@@ -311,7 +326,7 @@ func TestHandlerChatCompletionsStream(t *testing.T) {
 }
 
 func TestHandlerChatCompletionsBodyTooLarge(t *testing.T) {
-	cfg := config.DefaultAppConfigForTest()
+	cfg := testSettings()
 	h := NewHandler(nil, cfg, &chatjimmy.Client{})
 	body := strings.NewReader(strings.Repeat("x", maxRequestBytes+1))
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
@@ -323,7 +338,7 @@ func TestHandlerChatCompletionsBodyTooLarge(t *testing.T) {
 }
 
 func TestHandlerChatCompletionsInvalidJSON(t *testing.T) {
-	cfg := config.DefaultAppConfigForTest()
+	cfg := testSettings()
 	h := NewHandler(nil, cfg, &chatjimmy.Client{})
 	body := strings.NewReader(`not-json`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
@@ -335,7 +350,7 @@ func TestHandlerChatCompletionsInvalidJSON(t *testing.T) {
 }
 
 func TestHandlerChatCompletionsEmptyMessages(t *testing.T) {
-	cfg := config.DefaultAppConfigForTest()
+	cfg := testSettings()
 	h := NewHandler(nil, cfg, &chatjimmy.Client{})
 	body := strings.NewReader(`{"messages":[]}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
@@ -347,7 +362,7 @@ func TestHandlerChatCompletionsEmptyMessages(t *testing.T) {
 }
 
 func TestHandlerChatCompletionsRejectsN(t *testing.T) {
-	cfg := config.DefaultAppConfigForTest()
+	cfg := testSettings()
 	h := NewHandler(nil, cfg, &chatjimmy.Client{})
 	body := strings.NewReader(`{"n":2,"messages":[{"role":"user","content":"hi"}]}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
@@ -365,7 +380,7 @@ func TestHandlerChatCompletionsStreamBoolish(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	cfg := config.DefaultAppConfigForTest()
+	cfg := testSettings()
 	h := NewHandler(nil, cfg, &chatjimmy.Client{URL: upstream.URL})
 	body := strings.NewReader(`{"stream":"true","messages":[{"role":"user","content":"hi"}]}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
@@ -388,7 +403,7 @@ func TestHandlerChatCompletionsUpstreamError(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	cfg := config.DefaultAppConfigForTest()
+	cfg := testSettings()
 	h := NewHandler(nil, cfg, &chatjimmy.Client{URL: upstream.URL})
 	body := strings.NewReader(`{"messages":[{"role":"user","content":"hi"}]}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
@@ -443,7 +458,7 @@ func TestHandlerMethodNotAllowedModels(t *testing.T) {
 }
 
 func TestHandlerChatCompletionsOnlySystemMessages(t *testing.T) {
-	cfg := config.DefaultAppConfigForTest()
+	cfg := testSettings()
 	h := NewHandler(nil, cfg, &chatjimmy.Client{})
 	body := strings.NewReader(`{"messages":[{"role":"system","content":"rules"}]}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
@@ -463,7 +478,7 @@ func TestHandlerChatCompletionsChatOptionsSystemPrompt(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	cfg := config.DefaultAppConfigForTest()
+	cfg := testSettings()
 	h := NewHandler(nil, cfg, &chatjimmy.Client{URL: upstream.URL})
 	body := strings.NewReader(`{
 		"messages":[{"role":"user","content":"hi"}],
@@ -488,7 +503,7 @@ func TestHandlerChatCompletionsToolResponse(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	cfg := config.DefaultAppConfigForTest()
+	cfg := testSettings()
 	h := NewHandler(nil, cfg, &chatjimmy.Client{URL: upstream.URL})
 	body := strings.NewReader(`{
 		"messages":[{"role":"user","content":"read file"}],
@@ -513,10 +528,10 @@ func TestHandlerChatCompletionsToolResponse(t *testing.T) {
 }
 
 func TestHandlerModelsExtras(t *testing.T) {
-	cfg := testConfig()
-	cfg.ChatJimmyModel = "custom-model"
-	cfg.ChatJimmyModels = "extra-a, extra-b"
-	h := NewHandler(nil, cfg, &chatjimmy.Client{})
+	s := testConfig()
+	s.ChatJimmyModel = "custom-model"
+	s.ChatJimmyModels = []string{"extra-a", "extra-b"}
+	h := NewHandler(nil, s, &chatjimmy.Client{})
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -612,7 +627,7 @@ func TestHandlerChatCompletionsToolChoiceNoneSkipsParse(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	cfg := config.DefaultAppConfigForTest()
+	cfg := testSettings()
 	h := NewHandler(nil, cfg, &chatjimmy.Client{URL: upstream.URL})
 	body := strings.NewReader(`{
 		"messages":[{"role":"user","content":"read file"}],
@@ -700,7 +715,7 @@ func TestHandlerGeminiStream(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	cfg := config.DefaultAppConfigForTest()
+	cfg := testSettings()
 	h := NewHandler(nil, cfg, &chatjimmy.Client{URL: upstream.URL})
 	body := strings.NewReader(`{"contents":[{"parts":[{"text":"hi"}]}]}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-1.5-flash:streamGenerateContent", body)

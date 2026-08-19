@@ -227,8 +227,8 @@ func (h *Handler) translateOptions() chatjimmy.TranslateOptions {
 }
 
 func (h *Handler) defaultModel() string {
-	if h.cfg != nil {
-		if model := strings.TrimSpace(h.cfg.ChatJimmyModel); model != "" {
+	if h.settings != nil {
+		if model := strings.TrimSpace(h.settings.ChatJimmyModel); model != "" {
 			return model
 		}
 	}
@@ -245,7 +245,7 @@ func (h *Handler) logChat(kind, model string, start time.Time, truncated, compac
 	if compacted {
 		h.logger.Printf("dropped tools JSON from oversized system prompt")
 	}
-	if h.cfg == nil || !h.cfg.Verbose {
+	if h.settings == nil || !h.settings.Verbose {
 		return
 	}
 	h.logger.Printf(

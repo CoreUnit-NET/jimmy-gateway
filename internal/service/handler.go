@@ -9,23 +9,23 @@ import (
 	"strings"
 	"time"
 
-	"github.com/CoreUnit-NET/jimmy-gateway/internal/config"
+	"github.com/CoreUnit-NET/jimmy-gateway/internal/settings"
 	"github.com/CoreUnit-NET/jimmy-gateway/lib/chatjimmy"
 )
 
 // Handler implements the OpenAI-compatible proxy routes from cj2api proxy.js.
 type Handler struct {
-	logger *log.Logger
-	cfg    *config.AppConfig
-	client *chatjimmy.Client
+	logger   *log.Logger
+	settings *settings.Settings
+	client   *chatjimmy.Client
 }
 
 // NewHandler returns an HTTP handler for the ChatJimmy proxy.
-func NewHandler(logger *log.Logger, cfg *config.AppConfig, client *chatjimmy.Client) *Handler {
+func NewHandler(logger *log.Logger, s *settings.Settings, client *chatjimmy.Client) *Handler {
 	if logger == nil {
 		logger = log.New(os.Stdout, "", log.LstdFlags)
 	}
-	return &Handler{logger: logger, cfg: cfg, client: client}
+	return &Handler{logger: logger, settings: s, client: client}
 }
 
 // ServeHTTP routes requests through path normalization, aliases, and handlers.
@@ -34,7 +34,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := resolvePath(r.URL.Path)
 	sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 
-	if h.cfg != nil && h.cfg.Verbose {
+	if h.settings != nil && h.settings.Verbose {
 		h.logger.Printf("%s %s", r.Method, path)
 	}
 
@@ -121,8 +121,8 @@ func (h *Handler) handleModels(w http.ResponseWriter) {
 	now := time.Now().Unix()
 	defaultModel := h.defaultModel()
 	extras := []string(nil)
-	if h.cfg != nil {
-		extras = chatjimmy.SplitCSV(h.cfg.ChatJimmyModels)
+	if h.settings != nil {
+		extras = h.settings.ChatJimmyModels
 	}
 	models := chatjimmy.ListModels(defaultModel, extras)
 	data := make([]map[string]any, 0, len(models))
@@ -160,10 +160,10 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) authorize(r *http.Request) bool {
-	if h.cfg == nil {
+	if h.settings == nil {
 		return true
 	}
-	expected := strings.TrimSpace(h.cfg.APIKey)
+	expected := strings.TrimSpace(h.settings.APIKey)
 	if expected == "" {
 		return true
 	}
@@ -192,12 +192,12 @@ func bearerToken(auth string) string {
 }
 
 func (h *Handler) allowedOrigin() string {
-	if h.cfg == nil {
-		return config.DefaultAllowedOrigin
+	if h.settings == nil {
+		return "*"
 	}
-	origin := strings.TrimSpace(h.cfg.AllowedOrigin)
+	origin := strings.TrimSpace(h.settings.AllowedOrigin)
 	if origin == "" {
-		return config.DefaultAllowedOrigin
+		return "*"
 	}
 	return origin
 }
@@ -249,7 +249,7 @@ func (h *Handler) writeSSE(w http.ResponseWriter, payload []byte) {
 }
 
 func (h *Handler) logRequest(method, path string, status int, start time.Time) {
-	if h.cfg == nil || !h.cfg.Verbose || h.logger == nil {
+	if h.settings == nil || !h.settings.Verbose || h.logger == nil {
 		return
 	}
 	h.logger.Printf("%s %s status=%d duration=%s", method, path, status, time.Since(start).Round(time.Millisecond))

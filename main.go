@@ -3,8 +3,8 @@ package main
 /*
 jimmy-gateway entrypoint.
 
-Load .env, parse config, dispatch CLI commands, then start the ChatJimmy
-OpenAI-compatible HTTP proxy when serving.
+Load .env, parse config, convert to settings, dispatch CLI commands,
+then start the ChatJimmy OpenAI-compatible HTTP proxy when serving.
 */
 
 import (
@@ -15,6 +15,7 @@ import (
 
 	"github.com/CoreUnit-NET/jimmy-gateway/internal/config"
 	"github.com/CoreUnit-NET/jimmy-gateway/internal/service"
+	"github.com/CoreUnit-NET/jimmy-gateway/internal/settings"
 	"github.com/joho/godotenv"
 )
 
@@ -43,20 +44,26 @@ func run() int {
 		return 1
 	}
 
-	if cfg.ShowVersion {
+	if cfg.ShowVersion || cfg.Command == config.CommandVersion {
 		printVersion()
 		return 0
 	}
 
-	if cfg.Verbose {
+	s, err := settings.FromAppConfig(cfg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+
+	if s.Verbose {
 		logger = newLogger(true)
 	}
 
-	switch cfg.Command {
-	case config.CommandServe:
-		return runServe(logger, cfg)
+	switch s.Command {
+	case config.CommandServe, "":
+		return runServe(logger, s)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q\n", cfg.Command)
+		fmt.Fprintf(os.Stderr, "unknown command %q\n", s.Command)
 		return 1
 	}
 }
@@ -73,18 +80,13 @@ func printVersion() {
 	fmt.Printf("%s version %s, build %s\n", DisplayName, Version, Commit)
 }
 
-func runServe(logger *log.Logger, cfg *config.AppConfig) int {
-	if err := cfg.Validate(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-
+func runServe(logger *log.Logger, s *settings.Settings) int {
 	if err := service.Run(service.RunOptions{
 		Logger:      logger,
 		ShortName:   ShortName,
 		DisplayName: DisplayName,
 		Version:     Version,
-		Config:      cfg,
+		Settings:    s,
 	}); err != nil {
 		logger.Printf("error: %v", err)
 		return 1
