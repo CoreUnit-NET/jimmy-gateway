@@ -351,6 +351,14 @@ make test
 make build
 ```
 
+Against a running gateway (host `PORT` from `.env`, or `BASE_URL` / `API_KEY`):
+
+```sh
+PORT=38081 make smoke
+# optional live upstream chat:
+PORT=38081 SMOKE_LIVE=1 make smoke
+```
+
 Auto-reload with Air:
 
 ```sh
