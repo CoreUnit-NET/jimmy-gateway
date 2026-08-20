@@ -1,5 +1,11 @@
 tmp_dir = "tmp"
 
 [build]
-  cmd = "make -s init"
-  entrypoint = "./bin"
+  # Build only — tidy/test stay on `make init` / CI so Air reloads stay fast.
+  # Write under tmp/ so a host `make build` (./bin) cannot clobber the live Air binary.
+  cmd = "make -s build-air"
+  entrypoint = ["./tmp/out/bin"]
+  # Ignore docs/fixtures/scripts so edits there do not rebuild the gateway.
+  include_ext = ["go", "mod", "sum", "toml"]
+  exclude_dir = ["tmp", "data", "context", "vendor", ".git", "scripts"]
+  exclude_regex = ["_test\\.go"]

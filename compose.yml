@@ -23,8 +23,9 @@ services:
       - |
         set -euo pipefail
         mkdir -p /app/data /cache/go-build /cache/pkg/mod
+        # Fix bind-mount ownership for uid 1000; avoid world-writable 777.
         chown -R 1000:1000 /app/data /cache
-        chmod -R 777 /app/data /cache
+        chmod -R u+rwX,g+rwX /app/data /cache
         exec setpriv --reuid=1000 --regid=1000 --clear-groups -- $$INIT_CMD
 
   deploy:

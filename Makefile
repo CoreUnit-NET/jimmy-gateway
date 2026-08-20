@@ -1,5 +1,5 @@
-# prepare env file and tmp dir
-$(shell mkdir -p tmp/out && touch .env && git init -q)
+# prepare env file and tmp dir (git init only when missing — avoid side effects every make)
+$(shell mkdir -p tmp/out && touch .env && if [ ! -d .git ]; then git init -q; fi)
 
 # import custom makefiles
 -include Makefile.project
@@ -36,6 +36,8 @@ PROJECT_COMMIT_SHORT := $(shell git rev-parse --is-inside-work-tree > /dev/null 
 PROJECT_BUILD_ARGS ?= "$(PROJECT_EXTRA_BUILD_ARGS)-X main.Version=$(PROJECT_VERSION) -X main.Commit=$(PROJECT_COMMIT_SHORT) -X \"main.DisplayName=$(PROJECT_DISPLAY_NAME)\" -X main.ShortName=$(PROJECT_SHORT_NAME)"
 PROJECT_BUILDALL_OS ?= linux darwin windows
 PROJECT_BUILDALL_ARCH ?= arm amd64 386 arm64
+# Default host/CI binary path. Air overrides to tmp/out/bin to avoid bind-mount races.
+PROJECT_BIN ?= bin
 
 # general default vars
 PORT ?= 8080
@@ -65,6 +67,8 @@ GOCACHE ?= $(shell if [ -d "$$(go env GOCACHE)" ]; then realpath "$$(go env GOCA
 ##@: default is 'linux darwin windows'
 ##@ PROJECT_BUILDALL_ARCH: defines 'buildall' arch targets
 ##@: default is 'arm amd64 386 arm64'
+##@ PROJECT_BIN: go build output path,
+##@: default is bin (Air uses tmp/out/bin)
 ##@
 ##@ Docker vars
 ##@
@@ -147,12 +151,12 @@ clean: ##@ cleans up generated files and docker cache
 	fi
 	@if command -v docker 2>&1 >/dev/null; then \
 		echo "cleanup docker containers and images..."; \
-		docker rm -f dev-local-$(PROJECT_SHORT_NAME)-bash > /dev/null 2>&1 \
-		docker rm -f dev-local-$(PROJECT_SHORT_NAME) > /dev/null 2>&1 \
+		docker compose down --remove-orphans > /dev/null 2>&1 || true; \
+		docker rm -f dev-$(PROJECT_SHORT_NAME) > /dev/null 2>&1 || true; \
 		docker image prune -f; \
 	fi
 	@echo "cleanup done!"
-	
+
 ##@
 ##@ Go commands
 ##@
@@ -164,11 +168,16 @@ run: ##@ runs the main.go file using go run
 .PHONY: build
 build: ##@ uses go to build the app with build args
 	@touch .env
+	@mkdir -p "$(dir $(PROJECT_BIN))"
 	go build \
 		-buildvcs=false \
 		-ldflags=$(PROJECT_BUILD_ARGS) \
-		-o bin
-	@chmod +x bin
+		-o "$(PROJECT_BIN)"
+	@chmod +x "$(PROJECT_BIN)"
+
+.PHONY: build-air
+build-air: ##@ Air-only build into tmp/out/bin (avoids clobbering ./bin)
+	@$(MAKE) -s build PROJECT_BIN=tmp/out/bin
 
 .PHONY: up
 up: ##@ updates dependencies recursively using go get
@@ -225,11 +234,19 @@ docker: ##@ runs a shell in the container
 		local
 
 .PHONY: docker/dev
-docker/dev: ##@ runs app in docker via air
-	@docker rm -f dev-$(PROJECT_SHORT_NAME) > /dev/null 2>&1 || true
-	docker compose up --build --remove-orphans local
+docker/dev: ##@ runs app in docker via air (detached)
+	docker compose up -d --build --remove-orphans local
+	@echo "local started in background (make docker/logs FOLLOW=1)"
 
 .PHONY: docker/deploy
-docker/deploy: ##@ runs app in docker in a fresh environment
-	@docker rm -f dev-$(PROJECT_SHORT_NAME) > /dev/null 2>&1 || true
-	docker compose up --build --remove-orphans deploy
+docker/deploy: ##@ runs app in docker in a fresh environment (detached)
+	docker compose up -d --build --remove-orphans deploy
+	@echo "deploy started in background (make docker/logs FOLLOW=1 ARGS=deploy)"
+
+.PHONY: docker/down
+docker/down: ##@ stops compose services without removing volumes
+	docker compose down --remove-orphans
+
+.PHONY: docker/logs
+docker/logs: ##@ show compose logs (FOLLOW=1 to follow; ARGS=service optional)
+	docker compose logs $(if $(FOLLOW),-f,) --tail=200 $(ARGS)
