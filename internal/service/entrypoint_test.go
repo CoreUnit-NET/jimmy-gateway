@@ -39,7 +39,10 @@ func testConfig() *settings.Settings {
 func TestLogChatCompactionAlways(t *testing.T) {
 	var buf bytes.Buffer
 	h := NewHandler(log.New(&buf, "", 0), testSettings(), &chatjimmy.Client{})
-	h.logChat("openai", chatjimmy.DefaultModel, time.Now(), true, true, chatjimmy.Usage{})
+	h.logChat("openai", chatjimmy.DefaultModel, time.Now(), true, true, chatjimmy.Usage{
+		PromptTokens:     11,
+		CompletionTokens: 7,
+	})
 	got := buf.String()
 	if !strings.Contains(got, "dropped tools JSON") {
 		t.Fatalf("log = %q, want compaction message", got)
@@ -47,8 +50,154 @@ func TestLogChatCompactionAlways(t *testing.T) {
 	if !strings.Contains(got, "system prompt truncated") {
 		t.Fatalf("log = %q, want truncate message", got)
 	}
-	if strings.Contains(got, "chat kind=") {
-		t.Fatalf("verbose latency log leaked without verbose: %q", got)
+	if !strings.Contains(got, "chat kind=openai model="+chatjimmy.DefaultModel+" upstream=") {
+		t.Fatalf("log = %q, want always-on chat summary", got)
+	}
+	if strings.Contains(got, "prompt_tokens=") || strings.Contains(got, "truncated=") {
+		t.Fatalf("verbose chat detail leaked without verbose: %q", got)
+	}
+}
+
+func TestLogChatVerboseDetails(t *testing.T) {
+	var buf bytes.Buffer
+	s := testSettings()
+	s.Verbose = true
+	h := NewHandler(log.New(&buf, "", 0), s, &chatjimmy.Client{})
+	h.logChat("openai", chatjimmy.DefaultModel, time.Now(), false, false, chatjimmy.Usage{
+		PromptTokens:     11,
+		CompletionTokens: 7,
+	})
+	got := buf.String()
+	if !strings.Contains(got, "prompt_tokens=11") || !strings.Contains(got, "completion_tokens=7") {
+		t.Fatalf("log = %q, want verbose token fields", got)
+	}
+	if !strings.Contains(got, "upstream=") || !strings.Contains(got, "ms") {
+		t.Fatalf("log = %q, want upstream latency in ms", got)
+	}
+}
+
+func TestLogChatEmptyFields(t *testing.T) {
+	var buf bytes.Buffer
+	h := NewHandler(log.New(&buf, "", 0), testSettings(), &chatjimmy.Client{})
+	h.logChat("", "", time.Now(), false, false, chatjimmy.Usage{})
+	got := buf.String()
+	if !strings.Contains(got, "chat kind=unknown model=- upstream=") {
+		t.Fatalf("log = %q, want empty-field defaults", got)
+	}
+}
+
+func TestLogRequestNilSafe(t *testing.T) {
+	var buf bytes.Buffer
+	h := NewHandler(log.New(&buf, "", 0), testSettings(), &chatjimmy.Client{})
+	h.logRequest(nil, http.StatusOK, time.Now())
+	got := buf.String()
+	if !strings.Contains(got, "UNKNOWN / status=200 duration=") || !strings.Contains(got, "ms remote=-") {
+		t.Fatalf("log = %q, want nil-safe access log", got)
+	}
+
+	// Nil handler / nil logger must not panic.
+	var nilH *Handler
+	nilH.logRequest(nil, http.StatusOK, time.Now())
+	nilH.logChat("openai", "m", time.Now(), false, false, chatjimmy.Usage{})
+	hNilLog := &Handler{logger: nil, settings: testSettings()}
+	hNilLog.logRequest(nil, http.StatusOK, time.Now())
+	hNilLog.logChat("openai", "m", time.Now(), true, true, chatjimmy.Usage{})
+}
+
+func TestHandlerServeHTTPNilRequest(t *testing.T) {
+	var buf bytes.Buffer
+	h := NewHandler(log.New(&buf, "", 0), testSettings(), &chatjimmy.Client{})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	got := buf.String()
+	if !strings.Contains(got, "UNKNOWN / status=400") {
+		t.Fatalf("log = %q, want nil-request access log", got)
+	}
+	if strings.Count(got, "status=400") != 1 {
+		t.Fatalf("log = %q, want exactly one access line", got)
+	}
+}
+
+func TestHandlerAccessLogAlways(t *testing.T) {
+	var buf bytes.Buffer
+	h := NewHandler(log.New(&buf, "", 0), testSettings(), &chatjimmy.Client{})
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.RemoteAddr = "192.0.2.1:1234"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	got := buf.String()
+	if !strings.Contains(got, "GET /health status=200 duration=") || !strings.Contains(got, "ms remote=192.0.2.1:1234") {
+		t.Fatalf("log = %q, want access log with ms duration and remote", got)
+	}
+	if strings.Count(got, "GET /health status=200") != 1 {
+		t.Fatalf("log = %q, want exactly one access line", got)
+	}
+}
+
+func TestHandlerAccessLogKeepsAliasPath(t *testing.T) {
+	var buf bytes.Buffer
+	h := NewHandler(log.New(&buf, "", 0), testSettings(), &chatjimmy.Client{})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1-models", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	got := buf.String()
+	if !strings.Contains(got, "GET /api/v1-models status=200") {
+		t.Fatalf("log = %q, want client alias path preserved", got)
+	}
+	if strings.Contains(got, "GET /v1/models status=") {
+		t.Fatalf("log = %q, resolved path must not replace alias", got)
+	}
+}
+
+func TestHandlerAccessLogKeepsTrailingSlashAlias(t *testing.T) {
+	var buf bytes.Buffer
+	h := NewHandler(log.New(&buf, "", 0), testSettings(), &chatjimmy.Client{})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1-models/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	got := buf.String()
+	if !strings.Contains(got, "GET /api/v1-models/ status=200") {
+		t.Fatalf("log = %q, want client trailing-slash path preserved", got)
+	}
+}
+
+func TestHandlerAccessLogOmitsQuery(t *testing.T) {
+	var buf bytes.Buffer
+	h := NewHandler(log.New(&buf, "", 0), testSettings(), &chatjimmy.Client{})
+	req := httptest.NewRequest(http.MethodGet, "/health?key=secret-token", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	got := buf.String()
+	if strings.Contains(got, "secret-token") || strings.Contains(got, "?key=") {
+		t.Fatalf("log = %q, query must not appear in access log", got)
+	}
+	if !strings.Contains(got, "GET /health status=200") {
+		t.Fatalf("log = %q, want path without query", got)
+	}
+}
+
+func TestClientRequestPath(t *testing.T) {
+	if got := clientRequestPath(nil); got != "/" {
+		t.Fatalf("nil = %q", got)
+	}
+	empty := httptest.NewRequest(http.MethodGet, "/health", nil)
+	empty.URL.Path = ""
+	if got := clientRequestPath(empty); got != "/" {
+		t.Fatalf("empty path = %q", got)
+	}
+	noURL := &http.Request{}
+	if got := clientRequestPath(noURL); got != "/" {
+		t.Fatalf("nil URL = %q", got)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1-models?x=1", nil)
+	if got := clientRequestPath(req); got != "/api/v1-models" {
+		t.Fatalf("path = %q", got)
 	}
 }
 
@@ -59,18 +208,6 @@ func TestHandlerHealth(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
-	}
-}
-
-func TestHandlerAccessLogAlways(t *testing.T) {
-	var buf bytes.Buffer
-	h := NewHandler(log.New(&buf, "", 0), testSettings(), &chatjimmy.Client{})
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	got := buf.String()
-	if !strings.Contains(got, "GET /health status=200") {
-		t.Fatalf("log = %q, want access log", got)
 	}
 }
 

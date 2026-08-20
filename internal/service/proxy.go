@@ -239,23 +239,36 @@ func (h *Handler) logChat(kind, model string, start time.Time, truncated, compac
 	if h == nil || h.logger == nil {
 		return
 	}
+	if kind == "" {
+		kind = "unknown"
+	}
+	if model == "" {
+		model = "-"
+	}
 	if truncated {
 		h.logger.Printf("system prompt truncated to %d chars", chatjimmy.MaxSystemPrompt)
 	}
 	if compacted {
 		h.logger.Printf("dropped tools JSON from oversized system prompt")
 	}
-	if h.settings == nil || !h.settings.Verbose {
+	// upstream= is chat-path latency (translate+upstream+parse), not full HTTP
+	// time — access logs own the end-to-end request duration.
+	durationMS := time.Since(start).Milliseconds()
+	if durationMS < 0 {
+		durationMS = 0
+	}
+	if h.settings != nil && h.settings.Verbose {
+		h.logger.Printf(
+			"chat kind=%s model=%s upstream=%dms truncated=%t compacted=%t prompt_tokens=%d completion_tokens=%d",
+			kind,
+			model,
+			durationMS,
+			truncated,
+			compacted,
+			usage.PromptTokens,
+			usage.CompletionTokens,
+		)
 		return
 	}
-	h.logger.Printf(
-		"chat kind=%s model=%s duration=%s truncated=%t compacted=%t prompt_tokens=%d completion_tokens=%d",
-		kind,
-		model,
-		time.Since(start).Round(time.Millisecond),
-		truncated,
-		compacted,
-		usage.PromptTokens,
-		usage.CompletionTokens,
-	)
+	h.logger.Printf("chat kind=%s model=%s upstream=%dms", kind, model, durationMS)
 }

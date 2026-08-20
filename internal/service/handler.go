@@ -31,13 +31,20 @@ func NewHandler(logger *log.Logger, s *settings.Settings, client *chatjimmy.Clie
 // ServeHTTP routes requests through path normalization, aliases, and handlers.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	path := resolvePath(r.URL.Path)
 	sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+	// Exactly one access log per request, even when handlers return early.
+	defer func() { h.logRequest(r, sw.status, start) }()
+
+	if r == nil || r.URL == nil {
+		h.writeOpenAIError(sw, "Invalid request", "invalid_request_error", "invalid_request", http.StatusBadRequest)
+		return
+	}
+
+	path := resolvePath(r.URL.Path)
 
 	if r.Method == http.MethodOptions {
 		h.writeCORS(sw)
 		sw.WriteHeader(http.StatusNoContent)
-		h.logRequest(r.Method, path, sw.status, start)
 		return
 	}
 
@@ -45,50 +52,42 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case path == "/" || path == "/health":
 		if r.Method != http.MethodGet {
 			h.writeOpenAIError(sw, "Method not allowed", "invalid_request_error", "method_not_allowed", http.StatusMethodNotAllowed)
-			h.logRequest(r.Method, path, sw.status, start)
 			return
 		}
 		h.writeJSON(sw, http.StatusOK, map[string]string{"status": "ok"})
 	case path == "/v1/models":
 		if r.Method != http.MethodGet {
 			h.writeOpenAIError(sw, "Method not allowed", "invalid_request_error", "method_not_allowed", http.StatusMethodNotAllowed)
-			h.logRequest(r.Method, path, sw.status, start)
 			return
 		}
 		h.handleModels(sw)
 	case path == "/v1/chat/completions":
 		if r.Method != http.MethodPost {
 			h.writeOpenAIError(sw, "Method not allowed", "invalid_request_error", "method_not_allowed", http.StatusMethodNotAllowed)
-			h.logRequest(r.Method, path, sw.status, start)
 			return
 		}
 		if !h.authorize(r) {
 			h.writeOpenAIError(sw, "Invalid API key", "invalid_api_key", "invalid_api_key", http.StatusUnauthorized)
-			h.logRequest(r.Method, path, sw.status, start)
 			return
 		}
 		h.handleChatCompletions(sw, r)
 	case path == "/api/chat":
 		if r.Method != http.MethodPost {
 			h.writeOpenAIError(sw, "Method not allowed", "invalid_request_error", "method_not_allowed", http.StatusMethodNotAllowed)
-			h.logRequest(r.Method, path, sw.status, start)
 			return
 		}
 		if !h.authorize(r) {
 			h.writeOpenAIError(sw, "Invalid API key", "invalid_api_key", "invalid_api_key", http.StatusUnauthorized)
-			h.logRequest(r.Method, path, sw.status, start)
 			return
 		}
 		h.handleNativeChat(sw, r)
 	case path == "/v1/messages":
 		if r.Method != http.MethodPost {
 			h.writeAnthropicError(sw, "Method not allowed", "invalid_request_error", http.StatusMethodNotAllowed)
-			h.logRequest(r.Method, path, sw.status, start)
 			return
 		}
 		if !h.authorize(r) {
 			h.writeAnthropicError(sw, "Invalid API key", "authentication_error", http.StatusUnauthorized)
-			h.logRequest(r.Method, path, sw.status, start)
 			return
 		}
 		h.handleAnthropicMessages(sw, r)
@@ -96,21 +95,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if model, stream, ok := parseGeminiPath(path); ok {
 			if r.Method != http.MethodPost {
 				h.writeGeminiError(sw, "Method not allowed", http.StatusMethodNotAllowed)
-				h.logRequest(r.Method, path, sw.status, start)
 				return
 			}
 			if !h.authorize(r) {
 				h.writeGeminiError(sw, "Invalid API key", http.StatusUnauthorized)
-				h.logRequest(r.Method, path, sw.status, start)
 				return
 			}
 			h.handleGeminiGenerate(sw, r, model, stream)
-			h.logRequest(r.Method, path, sw.status, start)
 			return
 		}
 		h.writeOpenAIError(sw, "Not found", "invalid_request_error", "not_found", http.StatusNotFound)
 	}
-	h.logRequest(r.Method, path, sw.status, start)
 }
 
 func (h *Handler) handleModels(w http.ResponseWriter) {
@@ -244,11 +239,37 @@ func (h *Handler) writeSSE(w http.ResponseWriter, payload []byte) {
 	_, _ = w.Write(payload)
 }
 
-func (h *Handler) logRequest(method, path string, status int, start time.Time) {
-	if h.logger == nil {
+func (h *Handler) logRequest(r *http.Request, status int, start time.Time) {
+	if h == nil || h.logger == nil {
 		return
 	}
-	h.logger.Printf("%s %s status=%d duration=%s", method, path, status, time.Since(start).Round(time.Millisecond))
+	// Client-visible path only (aliases preserved; query string omitted to avoid
+	// leaking api keys). Millisecond duration so sub-second checks are not "0s".
+	method := "UNKNOWN"
+	path := "/"
+	remote := "-"
+	if r != nil {
+		if r.Method != "" {
+			method = r.Method
+		}
+		path = clientRequestPath(r)
+		if r.RemoteAddr != "" {
+			remote = r.RemoteAddr
+		}
+	}
+	durationMS := time.Since(start).Milliseconds()
+	if durationMS < 0 {
+		durationMS = 0
+	}
+	h.logger.Printf("%s %s status=%d duration=%dms remote=%s", method, path, status, durationMS, remote)
+}
+
+// clientRequestPath returns the path the client sent (no query), defaulting to "/".
+func clientRequestPath(r *http.Request) string {
+	if r == nil || r.URL == nil || r.URL.Path == "" {
+		return "/"
+	}
+	return r.URL.Path
 }
 
 type statusWriter struct {
@@ -259,6 +280,13 @@ type statusWriter struct {
 func (w *statusWriter) WriteHeader(status int) {
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
+}
+
+// Flush preserves streaming support when the underlying ResponseWriter is a Flusher.
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 type proxyError struct {
