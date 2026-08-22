@@ -288,6 +288,29 @@ func TestHandlerModels(t *testing.T) {
 	}
 }
 
+func TestHandlerModelsUnprefixedAlias(t *testing.T) {
+	h := NewHandler(nil, testConfig(), &chatjimmy.Client{})
+	req := httptest.NewRequest(http.MethodGet, "/models", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestHandlerHealthz(t *testing.T) {
+	h := NewHandler(nil, testConfig(), &chatjimmy.Client{})
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"status":"ok"`) {
+		t.Fatalf("body = %q", rec.Body.String())
+	}
+}
+
 func TestHandlerModelsAlias(t *testing.T) {
 	h := NewHandler(nil, testConfig(), &chatjimmy.Client{})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1-models", nil)
@@ -589,6 +612,16 @@ func TestHandlerCompletions(t *testing.T) {
 		out := rec.Body.String()
 		if !strings.Contains(out, `"text":"completion text"`) || !strings.Contains(out, "data: [DONE]") {
 			t.Fatalf("body = %q", out)
+		}
+	})
+
+	t.Run("unprefixed alias", func(t *testing.T) {
+		body := strings.NewReader(`{"prompt":"hi"}`)
+		req := httptest.NewRequest(http.MethodPost, "/completions", body)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 		}
 	})
 

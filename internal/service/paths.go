@@ -5,9 +5,13 @@ import "strings"
 var pathAliases = map[string]string{
 	"/api":                     "/",
 	"/api/health":              "/health",
+	"/healthz":                 "/health",
 	"/api/v1-models":           "/v1/models",
+	"/models":                  "/v1/models",
 	"/api/v1-chat-completions": "/v1/chat/completions",
+	"/chat/completions":        "/v1/chat/completions",
 	"/api/v1-completions":      "/v1/completions",
+	"/completions":             "/v1/completions",
 }
 
 func resolvePath(pathname string) string {
