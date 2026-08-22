@@ -12,11 +12,20 @@ var statsPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?s)<stats>(.*?)</stats>`),
 }
 
+// Closed thinking/reasoning wrappers (prefer these so answers after a closed
+// block are preserved). Unclosed openers are stripped to EOF afterward.
 var thinkingPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?s)<think\b[^>]*>.*?</think>`),
 	regexp.MustCompile(`(?s)<thinking\b[^>]*>.*?</thinking>`),
 	regexp.MustCompile(`(?s)<reasoning\b[^>]*>.*?</reasoning>`),
 	regexp.MustCompile(`(?s)<reflection\b[^>]*>.*?</reflection>`),
+}
+
+var unclosedThinkingPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?s)<think\b[^>]*>.*$`),
+	regexp.MustCompile(`(?s)<thinking\b[^>]*>.*$`),
+	regexp.MustCompile(`(?s)<reasoning\b[^>]*>.*$`),
+	regexp.MustCompile(`(?s)<reflection\b[^>]*>.*$`),
 }
 
 type ParsedUpstream struct {
@@ -65,6 +74,9 @@ func ParseUpstream(raw string) ParsedUpstream {
 func stripThinking(text string) string {
 	out := text
 	for _, pattern := range thinkingPatterns {
+		out = pattern.ReplaceAllString(out, "")
+	}
+	for _, pattern := range unclosedThinkingPatterns {
 		out = pattern.ReplaceAllString(out, "")
 	}
 	return strings.TrimSpace(out)

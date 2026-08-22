@@ -139,9 +139,9 @@ func TestParseUpstreamThinkingEdgeCases(t *testing.T) {
 			want: "ok",
 		},
 		{
-			name: "unclosed think left intact",
+			name: "unclosed think stripped to eof",
 			raw:  `<think>oops still open`,
-			want: `<think>oops still open`,
+			want: "",
 		},
 		{
 			name: "thinking only whitespace after strip",
@@ -149,9 +149,14 @@ func TestParseUpstreamThinkingEdgeCases(t *testing.T) {
 			want: "",
 		},
 		{
-			name: "think word in angle brackets not a tag",
+			name: "unclosed think after prose stripped",
 			raw:  `use <think> as prose? no close`,
-			want: `use <think> as prose? no close`,
+			want: "use",
+		},
+		{
+			name: "closed think then unclosed thinking",
+			raw:  `<think>a</think>keep<thinking>leaked`,
+			want: "keep",
 		},
 		{
 			name: "stats then thinking order",
