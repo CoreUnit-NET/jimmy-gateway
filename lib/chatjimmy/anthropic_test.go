@@ -224,3 +224,25 @@ func TestNewAnthropicError(t *testing.T) {
 		t.Fatalf("body = %s", raw)
 	}
 }
+
+func TestEncodeAnthropicSSENoHTMLEscape(t *testing.T) {
+	content := "done <|eot_id|>"
+	msg := CompletionToAnthropic(Completion{
+		ID:    "chatcmpl-abc",
+		Model: "claude-3-haiku-20240307",
+		Choices: []CompletionChoice{{
+			FinishReason: "stop",
+			Message: AssistantMessage{
+				Role:    "assistant",
+				Content: &content,
+			},
+		}},
+	})
+	sse := string(EncodeAnthropicSSE(msg))
+	if !strings.Contains(sse, `"text":"done <|eot_id|>"`) {
+		t.Fatalf("Anthropic SSE HTML-escaped: %q", sse)
+	}
+	if strings.Contains(sse, `\u003c`) {
+		t.Fatalf("Anthropic SSE HTML-escaped <: %q", sse)
+	}
+}

@@ -143,3 +143,24 @@ func TestNewGeminiError(t *testing.T) {
 		t.Fatalf("body = %s", raw)
 	}
 }
+
+func TestEncodeGeminiSSENoHTMLEscape(t *testing.T) {
+	content := "stop <|eot_id|>"
+	resp := CompletionToGemini(Completion{
+		ID: "chatcmpl-g", Model: "gemini-1.5-flash",
+		Choices: []CompletionChoice{{
+			FinishReason: "stop",
+			Message: AssistantMessage{
+				Role:    "assistant",
+				Content: &content,
+			},
+		}},
+	})
+	sse := string(EncodeGeminiSSE(resp))
+	if !strings.Contains(sse, `"text":"stop <|eot_id|>"`) {
+		t.Fatalf("Gemini SSE HTML-escaped: %q", sse)
+	}
+	if strings.Contains(sse, `\u003c`) {
+		t.Fatalf("Gemini SSE HTML-escaped <: %q", sse)
+	}
+}

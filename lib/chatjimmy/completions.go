@@ -216,7 +216,7 @@ func AppendTextUsageChunk(chunks []TextCompletionChunk, completion TextCompletio
 func EncodeTextSSEChunks(chunks []TextCompletionChunk) []byte {
 	var out []byte
 	for _, chunk := range chunks {
-		b, _ := json.Marshal(chunk)
+		b, _ := MarshalJSON(chunk)
 		out = append(out, []byte("data: "+string(b)+"\n\n")...)
 	}
 	out = append(out, []byte("data: [DONE]\n\n")...)

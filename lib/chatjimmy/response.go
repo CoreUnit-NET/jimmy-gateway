@@ -3,7 +3,6 @@ package chatjimmy
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -197,7 +196,7 @@ func AppendUsageChunk(chunks []StreamChunk, completion Completion) []StreamChunk
 func EncodeSSEChunks(chunks []StreamChunk) []byte {
 	var out []byte
 	for _, chunk := range chunks {
-		b, _ := json.Marshal(chunk)
+		b, _ := MarshalJSON(chunk)
 		out = append(out, []byte("data: "+string(b)+"\n\n")...)
 	}
 	out = append(out, []byte("data: [DONE]\n\n")...)

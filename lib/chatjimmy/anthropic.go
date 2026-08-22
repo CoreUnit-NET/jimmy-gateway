@@ -224,7 +224,7 @@ func EncodeAnthropicSSE(msg AnthropicMessage) []byte {
 }
 
 func appendAnthropicEvent(out []byte, event string, payload any) []byte {
-	b, _ := json.Marshal(payload)
+	b, _ := MarshalJSON(payload)
 	out = append(out, []byte("event: "+event+"\n")...)
 	out = append(out, []byte("data: "+string(b)+"\n\n")...)
 	return out

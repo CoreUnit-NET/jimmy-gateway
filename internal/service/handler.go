@@ -242,7 +242,9 @@ func (h *Handler) writeJSON(w http.ResponseWriter, status int, data any) {
 	h.writeCORS(w)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(data)
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(data)
 }
 
 func (h *Handler) writeRaw(w http.ResponseWriter, status int, contentType string, body []byte) {

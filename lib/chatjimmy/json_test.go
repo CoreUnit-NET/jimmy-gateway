@@ -2,6 +2,7 @@ package chatjimmy
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -39,5 +40,21 @@ func TestMustJSON(t *testing.T) {
 	raw = mustJSON(map[string]any{})
 	if string(raw) != `{}` {
 		t.Fatalf("mustJSON object = %s", raw)
+	}
+}
+
+func TestMarshalJSONNoHTMLEscape(t *testing.T) {
+	raw, err := MarshalJSON(map[string]string{
+		"reason": "<|eot_id|> & more>",
+	})
+	if err != nil {
+		t.Fatalf("MarshalJSON: %v", err)
+	}
+	got := string(raw)
+	if !strings.Contains(got, `"reason":"<|eot_id|> & more>"`) {
+		t.Fatalf("MarshalJSON = %s, want literal < > &", got)
+	}
+	if strings.Contains(got, `\u003c`) || strings.Contains(got, `\u003e`) || strings.Contains(got, `\u0026`) {
+		t.Fatalf("MarshalJSON HTML-escaped: %s", got)
 	}
 }

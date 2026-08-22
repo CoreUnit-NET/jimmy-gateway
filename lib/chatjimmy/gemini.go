@@ -177,7 +177,7 @@ func CompletionToGemini(completion Completion) GeminiResponse {
 }
 
 func EncodeGeminiSSE(resp GeminiResponse) []byte {
-	b, _ := json.Marshal(resp)
+	b, _ := MarshalJSON(resp)
 	return []byte("data: " + string(b) + "\n\n")
 }
 

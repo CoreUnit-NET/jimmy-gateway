@@ -185,6 +185,23 @@ func TestAppendUsageChunkOnOff(t *testing.T) {
 	}
 }
 
+func TestEncodeSSEChunksNoHTMLEscape(t *testing.T) {
+	chunks := []StreamChunk{{
+		ID: "chatcmpl-x", Object: "chat.completion.chunk", Created: 1, Model: "llama3.1-8B",
+		Choices: []StreamChunkChoice{{
+			Index: 0,
+			Delta: StreamChunkDelta{Content: "<|eot_id|> & more>"},
+		}},
+	}}
+	sse := string(EncodeSSEChunks(chunks))
+	if !strings.Contains(sse, `"content":"<|eot_id|> & more>"`) {
+		t.Fatalf("SSE HTML-escaped content: %q", sse)
+	}
+	if strings.Contains(sse, `\u003c`) || strings.Contains(sse, `\u003e`) || strings.Contains(sse, `\u0026`) {
+		t.Fatalf("SSE HTML-escaped: %q", sse)
+	}
+}
+
 func TestAppendUsageChunkAfterToolStream(t *testing.T) {
 	content := "working"
 	completion := Completion{
