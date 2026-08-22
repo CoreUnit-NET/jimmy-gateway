@@ -1,5 +1,5 @@
-# prepare env file and tmp dir (git init only when missing — avoid side effects every make)
-$(shell mkdir -p tmp/out && touch .env && if [ ! -d .git ]; then git init -q; fi)
+# prepare env file and tmp dir
+$(shell mkdir -p tmp/out && touch .env && git init -q)
 
 # import custom makefiles
 -include Makefile.project
@@ -12,13 +12,13 @@ export
 # check required project vars
 ifndef PROJECT_DISPLAY_NAME
 PROJECT_DISPLAY_NAME := Example App
-$(shell printf '\nPROJECT_DISPLAY_NAME=%s\n' "$(PROJECT_DISPLAY_NAME)" >> .env.project)
+$(shell echo "\nPROJECT_DISPLAY_NAME=$(PROJECT_DISPLAY_NAME)" >> .env.project)
 $(info Created `PROJECT_DISPLAY_NAME` variable in `.env.project` file!)
 endif
 
 ifndef PROJECT_VERSION
 PROJECT_VERSION := 0.0.1
-$(shell printf '\nPROJECT_VERSION=%s\n' "$(PROJECT_VERSION)" >> .env.project)
+$(shell echo "\nPROJECT_VERSION=$(PROJECT_VERSION)" >> .env.project)
 $(info Created `PROJECT_VERSION` variable in `.env.project` file!)
 endif
 
@@ -36,8 +36,6 @@ PROJECT_COMMIT_SHORT := $(shell git rev-parse --is-inside-work-tree > /dev/null 
 PROJECT_BUILD_ARGS ?= "$(PROJECT_EXTRA_BUILD_ARGS)-X main.Version=$(PROJECT_VERSION) -X main.Commit=$(PROJECT_COMMIT_SHORT) -X \"main.DisplayName=$(PROJECT_DISPLAY_NAME)\" -X main.ShortName=$(PROJECT_SHORT_NAME)"
 PROJECT_BUILDALL_OS ?= linux darwin windows
 PROJECT_BUILDALL_ARCH ?= arm amd64 386 arm64
-# Default host/CI binary path. Air overrides to tmp/out/bin to avoid bind-mount races.
-PROJECT_BIN ?= bin
 
 # general default vars
 PORT ?= 8080
@@ -45,6 +43,10 @@ HOST ?= 0.0.0.0
 GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
 GOCACHE ?= $(shell if [ -d "$$(go env GOCACHE)" ]; then realpath "$$(go env GOCACHE)"; else mkdir -p tmp/.cache/go-build && realpath "tmp/.cache/go-build"; fi)
+
+# Host identity for compose bind-mount ownership (see compose.yml RUN_UID/RUN_GID)
+export UID ?= $(shell id -u)
+export GID ?= $(shell id -g)
 
 ##@ These environment variables control various project configurations, including build, run, and deployment settings.
 ##@ They are loaded from the `.env.project` file and overwrite the `.env` file variables.
@@ -67,8 +69,6 @@ GOCACHE ?= $(shell if [ -d "$$(go env GOCACHE)" ]; then realpath "$$(go env GOCA
 ##@: default is 'linux darwin windows'
 ##@ PROJECT_BUILDALL_ARCH: defines 'buildall' arch targets
 ##@: default is 'arm amd64 386 arm64'
-##@ PROJECT_BIN: go build output path,
-##@: default is bin (Air uses tmp/out/bin)
 ##@
 ##@ Docker vars
 ##@
@@ -126,13 +126,13 @@ info: ##@ prints a project info message
 
 .PHONY: vars
 vars: ##@ prints some vars for debugging
-	@printf '\nProject\n\n'
+	@echo "\nProject\n"
 	@env |grep "^PROJECT_" || true
-	@printf '\nGo\n\n'
+	@echo "\nGo\n"
 	@env |grep "^GO" || true
-	@printf '\nDocker\n\n'
+	@echo "\nDocker\n"
 	@env |grep "^DOCKER_" || true
-	@printf '\nGeneral\n\n'
+	@echo "\nGeneral\n"
 	@echo "ARGS: '$(ARGS)'"
 	@echo "PORT: '$(PORT)'"
 	@echo "HOST: '$(HOST)'"
@@ -156,7 +156,7 @@ clean: ##@ cleans up generated files and docker cache
 		docker image prune -f; \
 	fi
 	@echo "cleanup done!"
-
+	
 ##@
 ##@ Go commands
 ##@
@@ -168,16 +168,11 @@ run: ##@ runs the main.go file using go run
 .PHONY: build
 build: ##@ uses go to build the app with build args
 	@touch .env
-	@mkdir -p "$(dir $(PROJECT_BIN))"
 	go build \
 		-buildvcs=false \
 		-ldflags=$(PROJECT_BUILD_ARGS) \
-		-o "$(PROJECT_BIN)"
-	@chmod +x "$(PROJECT_BIN)"
-
-.PHONY: build-air
-build-air: ##@ Air-only build into tmp/out/bin (avoids clobbering ./bin)
-	@$(MAKE) -s build PROJECT_BIN=tmp/out/bin
+		-o bin
+	@chmod +x bin
 
 .PHONY: up
 up: ##@ updates dependencies recursively using go get
@@ -218,31 +213,24 @@ dev: ##@ runs the app in watch mode
 ##@ Docker targets
 ##@
 
-# docker compose run -it fails when stdin is not a TTY (CI, agent shells, etc.).
-DOCKER_RUN_TTY := $(shell test -t 0 && echo -it)
-
 .PHONY: docker
 docker: ##@ runs a shell in the container
 	@docker rm -f dev-$(PROJECT_SHORT_NAME) > /dev/null 2>&1 || true
-	docker compose run -P --rm $(DOCKER_RUN_TTY) --build --service-ports \
+	docker compose run -P --rm -it --build --service-ports \
 		--name dev-$(PROJECT_SHORT_NAME) \
 		-e INIT_CMD="bash" \
 		local
 
 .PHONY: docker/dev
-docker/dev: ##@ runs app in docker via air (detached)
-	docker compose up -d --build --remove-orphans local
-	@echo "local started in background (make docker/logs FOLLOW=1)"
+docker/dev: ##@ runs app in docker via air
+	@docker rm -f dev-$(PROJECT_SHORT_NAME) > /dev/null 2>&1 || true
+	docker compose run --rm -it --build --service-ports \
+		--name dev-$(PROJECT_SHORT_NAME) \
+		local
 
 .PHONY: docker/deploy
-docker/deploy: ##@ runs app in docker in a fresh environment (detached)
-	docker compose up -d --build --remove-orphans deploy
-	@echo "deploy started in background (make docker/logs FOLLOW=1 ARGS=deploy)"
-
-.PHONY: docker/down
-docker/down: ##@ stops compose services without removing volumes
-	docker compose down --remove-orphans
-
-.PHONY: docker/logs
-docker/logs: ##@ show compose logs (FOLLOW=1 to follow; ARGS=service optional)
-	docker compose logs $(if $(FOLLOW),-f,) --tail=200 $(ARGS)
+docker/deploy: ##@ runs app in docker in a fresh environment
+	@docker rm -f dev-$(PROJECT_SHORT_NAME) > /dev/null 2>&1 || true
+	docker compose run --rm -it --build --service-ports \
+		--name dev-$(PROJECT_SHORT_NAME) \
+		deploy
