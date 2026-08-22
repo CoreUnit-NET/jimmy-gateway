@@ -132,3 +132,135 @@ func TestBuildTextStreamChunks(t *testing.T) {
 		t.Fatalf("sse = %q", sse)
 	}
 }
+
+func TestCompletionsToChatRequestEdgeCases(t *testing.T) {
+	t.Run("n equals 1 allowed", func(t *testing.T) {
+		req, err := CompletionsToChatRequest([]byte(`{"prompt":"hi","n":1}`))
+		if err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if req.N == nil || *req.N != 1 {
+			t.Fatalf("n = %#v", req.N)
+		}
+	})
+
+	t.Run("whitespace only prompt string", func(t *testing.T) {
+		_, err := CompletionsToChatRequest([]byte(`{"prompt":"  \t\n"}`))
+		if err == nil || !strings.Contains(err.Error(), "prompt is required") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("whitespace only prompt array", func(t *testing.T) {
+		_, err := CompletionsToChatRequest([]byte(`{"prompt":[" ","\t"]}`))
+		if err == nil || !strings.Contains(err.Error(), "prompt is required") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("invalid json body", func(t *testing.T) {
+		_, err := CompletionsToChatRequest([]byte(`not-json`))
+		if err == nil || !strings.Contains(err.Error(), "JSON") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("sampling and stop passthrough", func(t *testing.T) {
+		raw := []byte(`{"prompt":"hi","top_p":0.9,"stop":["END","STOP"]}`)
+		req, err := CompletionsToChatRequest(raw)
+		if err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if req.TopP == nil || *req.TopP != 0.9 {
+			t.Fatalf("top_p = %#v", req.TopP)
+		}
+		if string(req.Stop) != `["END","STOP"]` {
+			t.Fatalf("stop = %s", req.Stop)
+		}
+	})
+
+	t.Run("tools in body ignored", func(t *testing.T) {
+		raw := []byte(`{"prompt":"hi","tools":[{"type":"function","function":{"name":"bash"}}]}`)
+		req, err := CompletionsToChatRequest(raw)
+		if err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if len(req.Tools) != 0 {
+			t.Fatalf("tools = %+v, want empty", req.Tools)
+		}
+	})
+}
+
+func TestChatToTextCompletionEdgeCases(t *testing.T) {
+	t.Run("tool_calls finish becomes stop", func(t *testing.T) {
+		content := "calling"
+		out := ChatToTextCompletion(Completion{
+			ID: "chatcmpl-x", Model: "m",
+			Choices: []CompletionChoice{{
+				Message:      AssistantMessage{Role: "assistant", Content: &content},
+				FinishReason: "tool_calls",
+			}},
+		})
+		if out.Choices[0].FinishReason == nil || *out.Choices[0].FinishReason != "stop" {
+			t.Fatalf("finish = %#v", out.Choices[0].FinishReason)
+		}
+		if out.ID != "cmpl-x" {
+			t.Fatalf("id = %q", out.ID)
+		}
+	})
+
+	t.Run("already cmpl id preserved", func(t *testing.T) {
+		out := ChatToTextCompletion(Completion{ID: "cmpl-keep", Model: "m"})
+		if out.ID != "cmpl-keep" {
+			t.Fatalf("id = %q", out.ID)
+		}
+	})
+
+	t.Run("empty id becomes cmpl-unknown", func(t *testing.T) {
+		out := ChatToTextCompletion(Completion{ID: "", Model: "m"})
+		if out.ID != "cmpl-unknown" {
+			t.Fatalf("id = %q", out.ID)
+		}
+	})
+
+	t.Run("bare id prefixed", func(t *testing.T) {
+		out := ChatToTextCompletion(Completion{ID: "raw123", Model: "m"})
+		if out.ID != "cmpl-raw123" {
+			t.Fatalf("id = %q", out.ID)
+		}
+	})
+
+	t.Run("nil content and empty choices", func(t *testing.T) {
+		out := ChatToTextCompletion(Completion{
+			ID: "chatcmpl-z", Model: "m",
+			Choices: []CompletionChoice{{
+				Message:      AssistantMessage{Role: "assistant", Content: nil},
+				FinishReason: "stop",
+			}},
+		})
+		if out.Choices[0].Text != "" {
+			t.Fatalf("text = %q", out.Choices[0].Text)
+		}
+
+		empty := ChatToTextCompletion(Completion{ID: "chatcmpl-e", Model: "m"})
+		if len(empty.Choices) != 1 || empty.Choices[0].Text != "" {
+			t.Fatalf("empty choices = %+v", empty.Choices)
+		}
+		if empty.Choices[0].FinishReason == nil || *empty.Choices[0].FinishReason != "stop" {
+			t.Fatalf("finish = %#v", empty.Choices[0].FinishReason)
+		}
+	})
+}
+
+func TestBuildTextStreamChunksEmpty(t *testing.T) {
+	chunks := BuildTextStreamChunks(TextCompletion{ID: "cmpl-1", Model: "m"})
+	if len(chunks) != 2 {
+		t.Fatalf("chunks = %d", len(chunks))
+	}
+	if chunks[0].Choices[0].Text != "" {
+		t.Fatalf("first text = %q", chunks[0].Choices[0].Text)
+	}
+	if chunks[1].Choices[0].FinishReason == nil || *chunks[1].Choices[0].FinishReason != "stop" {
+		t.Fatalf("second = %+v", chunks[1].Choices[0])
+	}
+}

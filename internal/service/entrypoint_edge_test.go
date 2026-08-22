@@ -460,3 +460,96 @@ func TestHandlerAuthOpenWhenAPIKeyEmpty(t *testing.T) {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestHandlerCompletionsEdgeCases(t *testing.T) {
+	t.Run("method not allowed", func(t *testing.T) {
+		h := NewHandler(nil, testConfig(), &chatjimmy.Client{})
+		req := httptest.NewRequest(http.MethodGet, "/v1/completions", nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("status = %d, want 405", rec.Code)
+		}
+	})
+
+	t.Run("auth required", func(t *testing.T) {
+		h := NewHandler(nil, testConfig(), &chatjimmy.Client{})
+		body := strings.NewReader(`{"prompt":"hi"}`)
+		req := httptest.NewRequest(http.MethodPost, "/v1/completions", body)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", rec.Code)
+		}
+	})
+
+	t.Run("rejects n greater than 1", func(t *testing.T) {
+		h := NewHandler(nil, testSettings(), &chatjimmy.Client{})
+		body := strings.NewReader(`{"prompt":"hi","n":2}`)
+		req := httptest.NewRequest(http.MethodPost, "/v1/completions", body)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("whitespace prompt rejected", func(t *testing.T) {
+		h := NewHandler(nil, testSettings(), &chatjimmy.Client{})
+		body := strings.NewReader(`{"prompt":"   "}`)
+		req := httptest.NewRequest(http.MethodPost, "/v1/completions", body)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("strips thinking from upstream", func(t *testing.T) {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`<think>secret</think>visible text`))
+		}))
+		t.Cleanup(upstream.Close)
+		h := NewHandler(nil, testSettings(), &chatjimmy.Client{URL: upstream.URL})
+		body := strings.NewReader(`{"prompt":"hi"}`)
+		req := httptest.NewRequest(http.MethodPost, "/v1/completions", body)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+		}
+		var out chatjimmy.TextCompletion
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(out.Choices) != 1 || out.Choices[0].Text != "visible text" {
+			t.Fatalf("choices = %+v", out.Choices)
+		}
+		if strings.Contains(out.Choices[0].Text, "secret") || strings.Contains(out.Choices[0].Text, "<think>") {
+			t.Fatalf("thinking leaked: %q", out.Choices[0].Text)
+		}
+	})
+}
+
+func TestHandlerChatStreamIncludeUsageFalse(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`Hi<|stats|>{"prefill_tokens":2,"decode_tokens":3,"total_tokens":5}<|/stats|>`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	h := NewHandler(nil, testSettings(), &chatjimmy.Client{URL: upstream.URL})
+	body := strings.NewReader(`{"stream":true,"stream_options":{"include_usage":false},"messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	out := rec.Body.String()
+	if strings.Contains(out, `"prompt_tokens"`) {
+		t.Fatalf("usage leaked with include_usage false: %q", out)
+	}
+	if !strings.Contains(out, "data: [DONE]") {
+		t.Fatalf("missing DONE: %q", out)
+	}
+}

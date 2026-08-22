@@ -184,3 +184,68 @@ func TestAppendUsageChunkOnOff(t *testing.T) {
 		t.Fatalf("SSE without include_usage leaked usage: %q", sseOff)
 	}
 }
+
+func TestAppendUsageChunkAfterToolStream(t *testing.T) {
+	content := "working"
+	completion := Completion{
+		ID: "chatcmpl-tools", Object: "chat.completion", Created: 2, Model: "llama3.1-8B",
+		Choices: []CompletionChoice{{
+			Index: 0,
+			Message: AssistantMessage{
+				Role:    "assistant",
+				Content: &content,
+				ToolCalls: []ToolCall{{
+					ID: "call_1", Type: "function",
+					Function: ToolCallFunction{Name: "read", Arguments: `{"path":"x"}`},
+				}},
+			},
+			FinishReason: "tool_calls",
+		}},
+		Usage: Usage{PromptTokens: 4, CompletionTokens: 6, TotalTokens: 10},
+	}
+	base := BuildStreamChunks(completion)
+	with := AppendUsageChunk(base, completion)
+	if len(with) != len(base)+1 {
+		t.Fatalf("len = %d, want %d", len(with), len(base)+1)
+	}
+	last := with[len(with)-1]
+	if len(last.Choices) != 0 || last.Usage == nil || last.Usage.TotalTokens != 10 {
+		t.Fatalf("usage chunk = %+v", last)
+	}
+	// finish_reason tool_calls must still be on an earlier chunk, not the usage chunk
+	foundToolFinish := false
+	for _, chunk := range with[:len(with)-1] {
+		for _, ch := range chunk.Choices {
+			if ch.FinishReason != nil && *ch.FinishReason == "tool_calls" {
+				foundToolFinish = true
+			}
+		}
+	}
+	if !foundToolFinish {
+		t.Fatal("expected tool_calls finish_reason before usage chunk")
+	}
+}
+
+func TestAppendUsageChunkZeroUsage(t *testing.T) {
+	completion := Completion{
+		ID: "chatcmpl-z", Created: 1, Model: "m",
+		Choices: []CompletionChoice{{
+			Message:      AssistantMessage{Role: "assistant", Content: strPtr("x")},
+			FinishReason: "stop",
+		}},
+	}
+	base := BuildStreamChunks(completion)
+	with := AppendUsageChunk(base, completion)
+	last := with[len(with)-1]
+	if last.Usage == nil {
+		t.Fatal("usage pointer should be set even when zeros")
+	}
+	if last.Usage.PromptTokens != 0 || last.Usage.CompletionTokens != 0 || last.Usage.TotalTokens != 0 {
+		t.Fatalf("usage = %+v", last.Usage)
+	}
+	if len(last.Choices) != 0 {
+		t.Fatalf("choices = %d", len(last.Choices))
+	}
+}
+
+func strPtr(s string) *string { return &s }

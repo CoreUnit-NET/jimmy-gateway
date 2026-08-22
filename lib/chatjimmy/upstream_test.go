@@ -116,3 +116,60 @@ func TestSafeInt(t *testing.T) {
 		}
 	}
 }
+
+func TestParseUpstreamThinkingEdgeCases(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "attributes on think tag",
+			raw:  `<think class="x">hidden</think>Visible`,
+			want: "Visible",
+		},
+		{
+			name: "multiple thinking blocks",
+			raw:  `<think>a</think>mid<thinking>b</thinking>end`,
+			want: "midend",
+		},
+		{
+			name: "nested-looking but sequential",
+			raw:  `<reasoning>outer</reasoning><reflection>inner</reflection>ok`,
+			want: "ok",
+		},
+		{
+			name: "unclosed think left intact",
+			raw:  `<think>oops still open`,
+			want: `<think>oops still open`,
+		},
+		{
+			name: "thinking only whitespace after strip",
+			raw:  `<think>x</think>   `,
+			want: "",
+		},
+		{
+			name: "think word in angle brackets not a tag",
+			raw:  `use <think> as prose? no close`,
+			want: `use <think> as prose? no close`,
+		},
+		{
+			name: "stats then thinking order",
+			raw:  `Hi<|stats|>{"prefill_tokens":1,"decode_tokens":1,"total_tokens":2}<|/stats|><think>x</think>`,
+			want: "Hi",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			parsed := ParseUpstream(tc.raw)
+			if parsed.Text != tc.want {
+				t.Fatalf("text = %q, want %q", parsed.Text, tc.want)
+			}
+		})
+	}
+
+	parsed := ParseUpstream(`Hi<|stats|>{"prefill_tokens":1,"decode_tokens":1,"total_tokens":2}<|/stats|><think>x</think>`)
+	if parsed.Usage.TotalTokens != 2 {
+		t.Fatalf("usage = %+v", parsed.Usage)
+	}
+}
