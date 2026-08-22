@@ -12,13 +12,13 @@ export
 # check required project vars
 ifndef PROJECT_DISPLAY_NAME
 PROJECT_DISPLAY_NAME := Example App
-$(shell echo "\nPROJECT_DISPLAY_NAME=$(PROJECT_DISPLAY_NAME)" >> .env.project)
+$(shell printf '\nPROJECT_DISPLAY_NAME=%s\n' "$(PROJECT_DISPLAY_NAME)" >> .env.project)
 $(info Created `PROJECT_DISPLAY_NAME` variable in `.env.project` file!)
 endif
 
 ifndef PROJECT_VERSION
 PROJECT_VERSION := 0.0.1
-$(shell echo "\nPROJECT_VERSION=$(PROJECT_VERSION)" >> .env.project)
+$(shell printf '\nPROJECT_VERSION=%s\n' "$(PROJECT_VERSION)" >> .env.project)
 $(info Created `PROJECT_VERSION` variable in `.env.project` file!)
 endif
 
@@ -126,13 +126,13 @@ info: ##@ prints a project info message
 
 .PHONY: vars
 vars: ##@ prints some vars for debugging
-	@echo "\nProject\n"
+	@printf '\nProject\n\n'
 	@env |grep "^PROJECT_" || true
-	@echo "\nGo\n"
+	@printf '\nGo\n\n'
 	@env |grep "^GO" || true
-	@echo "\nDocker\n"
+	@printf '\nDocker\n\n'
 	@env |grep "^DOCKER_" || true
-	@echo "\nGeneral\n"
+	@printf '\nGeneral\n\n'
 	@echo "ARGS: '$(ARGS)'"
 	@echo "PORT: '$(PORT)'"
 	@echo "HOST: '$(HOST)'"
