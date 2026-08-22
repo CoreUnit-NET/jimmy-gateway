@@ -264,3 +264,40 @@ func TestBuildTextStreamChunksEmpty(t *testing.T) {
 		t.Fatalf("second = %+v", chunks[1].Choices[0])
 	}
 }
+
+func TestCompletionsToChatRequestStreamOptions(t *testing.T) {
+	req, err := CompletionsToChatRequest([]byte(`{"prompt":"hi","stream":true,"stream_options":{"include_usage":true}}`))
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if !req.Stream {
+		t.Fatal("stream want true")
+	}
+	if req.StreamOptions == nil || !req.StreamOptions.IncludeUsage {
+		t.Fatalf("stream_options = %#v", req.StreamOptions)
+	}
+}
+
+func TestAppendTextUsageChunk(t *testing.T) {
+	reason := "stop"
+	completion := TextCompletion{
+		ID: "cmpl-1", Object: "text_completion", Created: 1, Model: "m",
+		Choices: []TextCompletionChoice{{Text: "hi", Index: 0, FinishReason: &reason}},
+		Usage:   Usage{PromptTokens: 1, CompletionTokens: 2, TotalTokens: 3},
+	}
+	chunks := AppendTextUsageChunk(BuildTextStreamChunks(completion), completion)
+	if len(chunks) != 3 {
+		t.Fatalf("chunks = %d", len(chunks))
+	}
+	last := chunks[len(chunks)-1]
+	if last.Usage == nil || last.Usage.TotalTokens != 3 {
+		t.Fatalf("usage = %#v", last.Usage)
+	}
+	if len(last.Choices) != 0 {
+		t.Fatalf("choices = %+v", last.Choices)
+	}
+	sse := string(EncodeTextSSEChunks(chunks))
+	if !strings.Contains(sse, `"usage"`) || !strings.Contains(sse, `"total_tokens":3`) {
+		t.Fatalf("sse = %q", sse)
+	}
+}

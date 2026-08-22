@@ -8,14 +8,15 @@ import (
 
 // CompletionsRequest is the OpenAI legacy text-completions request subset we support.
 type CompletionsRequest struct {
-	Model       string          `json:"model"`
-	Prompt      json.RawMessage `json:"prompt"`
-	MaxTokens   *int            `json:"max_tokens,omitempty"`
-	Temperature *float64        `json:"temperature,omitempty"`
-	TopP        *float64        `json:"top_p,omitempty"`
-	Stop        json.RawMessage `json:"stop,omitempty"`
-	Stream      bool            `json:"stream"`
-	N           *int            `json:"n,omitempty"`
+	Model         string          `json:"model"`
+	Prompt        json.RawMessage `json:"prompt"`
+	MaxTokens     *int            `json:"max_tokens,omitempty"`
+	Temperature   *float64        `json:"temperature,omitempty"`
+	TopP          *float64        `json:"top_p,omitempty"`
+	Stop          json.RawMessage `json:"stop,omitempty"`
+	Stream        bool            `json:"stream"`
+	StreamOptions *StreamOptions  `json:"stream_options,omitempty"`
+	N             *int            `json:"n,omitempty"`
 }
 
 // TextCompletion is an OpenAI legacy text-completions response.
@@ -42,6 +43,7 @@ type TextCompletionChunk struct {
 	Created int64                  `json:"created"`
 	Model   string                 `json:"model"`
 	Choices []TextCompletionChoice `json:"choices"`
+	Usage   *Usage                 `json:"usage,omitempty"`
 }
 
 func (r *CompletionsRequest) UnmarshalJSON(data []byte) error {
@@ -79,14 +81,15 @@ func CompletionsToChatRequest(raw []byte) (ChatRequest, error) {
 		return ChatRequest{}, fmt.Errorf("prompt must be a string or array of strings")
 	}
 	return ChatRequest{
-		Model:       req.Model,
-		Messages:    []Message{{Role: "user", Content: content}},
-		Stream:      req.Stream,
-		Temperature: req.Temperature,
-		TopP:        req.TopP,
-		MaxTokens:   req.MaxTokens,
-		Stop:        req.Stop,
-		N:           req.N,
+		Model:         req.Model,
+		Messages:      []Message{{Role: "user", Content: content}},
+		Stream:        req.Stream,
+		StreamOptions: req.StreamOptions,
+		Temperature:   req.Temperature,
+		TopP:          req.TopP,
+		MaxTokens:     req.MaxTokens,
+		Stop:          req.Stop,
+		N:             req.N,
 	}, nil
 }
 
@@ -193,6 +196,20 @@ func BuildTextStreamChunks(completion TextCompletion) []TextCompletionChunk {
 			}},
 		},
 	}
+}
+
+// AppendTextUsageChunk adds a final text-completion stream chunk with usage and empty choices.
+// Call only when the client requested stream_options.include_usage.
+func AppendTextUsageChunk(chunks []TextCompletionChunk, completion TextCompletion) []TextCompletionChunk {
+	usage := completion.Usage
+	return append(chunks, TextCompletionChunk{
+		ID:      completion.ID,
+		Object:  "text_completion",
+		Created: completion.Created,
+		Model:   completion.Model,
+		Choices: []TextCompletionChoice{},
+		Usage:   &usage,
+	})
 }
 
 // EncodeTextSSEChunks encodes text-completion chunks as OpenAI SSE + [DONE].
