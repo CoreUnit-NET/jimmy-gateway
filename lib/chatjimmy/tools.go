@@ -9,6 +9,7 @@ import (
 )
 
 var toolCallPattern = regexp.MustCompile(`(?s)<tool_call>\s*(.*?)\s*</tool_call>`)
+var unclosedToolCallPattern = regexp.MustCompile(`(?s)<tool_call\b[^>]*>.*$`)
 
 func FilterTools(tools []Tool) []Tool {
 	if len(tools) == 0 {
@@ -338,7 +339,8 @@ func ParseToolCalls(content string, tools []Tool, newID func() string) (string, 
 
 	matches := toolCallPattern.FindAllStringSubmatch(content, -1)
 	if len(matches) == 0 {
-		return content, nil
+		// Still strip unclosed / leftover <tool_call> so clients never see XML.
+		return stripToolCallXML(content), nil
 	}
 
 	allowed := toolSchemaIndex(tools)
@@ -379,7 +381,9 @@ func ParseToolCalls(content string, tools []Tool, newID func() string) (string, 
 }
 
 func stripToolCallXML(s string) string {
-	return strings.TrimSpace(toolCallPattern.ReplaceAllString(s, ""))
+	out := toolCallPattern.ReplaceAllString(s, "")
+	out = unclosedToolCallPattern.ReplaceAllString(out, "")
+	return strings.TrimSpace(out)
 }
 
 func callName(item map[string]any) string {

@@ -237,4 +237,27 @@ func TestParseToolCallsEdgeCases(t *testing.T) {
 			t.Fatalf("calls = %d", len(calls))
 		}
 	})
+
+	t.Run("unclosed tool_call stripped", func(t *testing.T) {
+		text, calls := ParseToolCalls(`Before <tool_call>{"name":"bash","arguments":{"command":"x"}`, tools, id)
+		if len(calls) != 0 {
+			t.Fatalf("calls = %+v, want 0 for unclosed", calls)
+		}
+		if text != "Before" {
+			t.Fatalf("text = %q, want Before", text)
+		}
+		if strings.Contains(text, "<tool_call>") {
+			t.Fatalf("xml leaked: %q", text)
+		}
+	})
+
+	t.Run("unclosed tool_call empty tools", func(t *testing.T) {
+		text, calls := ParseToolCalls(`Sure <tool_call>{"name":"read"`, nil, id)
+		if len(calls) != 0 {
+			t.Fatalf("calls = %+v", calls)
+		}
+		if text != "Sure" {
+			t.Fatalf("text = %q", text)
+		}
+	})
 }
