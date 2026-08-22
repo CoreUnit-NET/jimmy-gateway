@@ -194,10 +194,6 @@ test: ##@ runs all GO tests recursively without coverage
 	@echo "Run go tests recursively..."
 	go test ./...
 
-.PHONY: smoke
-smoke: ##@ curl smoke checks against running gateway (PORT or BASE_URL; optional API_KEY, SMOKE_LIVE=1)
-	@bash scripts/smoke.sh
-
 .PHONY: cover
 cover: ##@ generates a raw and html test coverage report
 	@echo "Run go tests recursively..."
