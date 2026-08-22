@@ -333,7 +333,7 @@ func extractCallObjects(obj any) []map[string]any {
 
 func ParseToolCalls(content string, tools []Tool, newID func() string) (string, []ToolCall) {
 	if len(tools) == 0 {
-		return content, nil
+		return stripToolCallXML(content), nil
 	}
 
 	matches := toolCallPattern.FindAllStringSubmatch(content, -1)
@@ -341,7 +341,7 @@ func ParseToolCalls(content string, tools []Tool, newID func() string) (string, 
 		return content, nil
 	}
 
-	index := toolSchemaIndex(tools)
+	allowed := toolSchemaIndex(tools)
 	calls := make([]ToolCall, 0, len(matches))
 	for _, match := range matches {
 		raw := strings.TrimSpace(match[1])
@@ -354,9 +354,16 @@ func ParseToolCalls(content string, tools []Tool, newID func() string) (string, 
 			if name == "" {
 				continue
 			}
+			schema, ok := allowed[name]
+			if !ok {
+				continue
+			}
 			args := callArguments(item)
-			normalized := normalizeToolArgs(args, index[name])
-			argsJSON, _ := json.Marshal(normalized)
+			normalized := normalizeToolArgs(args, schema)
+			argsJSON, err := json.Marshal(normalized)
+			if err != nil || string(argsJSON) == "null" {
+				argsJSON = []byte("{}")
+			}
 			calls = append(calls, ToolCall{
 				ID:   newID(),
 				Type: "function",
@@ -368,8 +375,11 @@ func ParseToolCalls(content string, tools []Tool, newID func() string) (string, 
 		}
 	}
 
-	text := strings.TrimSpace(toolCallPattern.ReplaceAllString(content, ""))
-	return text, calls
+	return stripToolCallXML(content), calls
+}
+
+func stripToolCallXML(s string) string {
+	return strings.TrimSpace(toolCallPattern.ReplaceAllString(s, ""))
 }
 
 func callName(item map[string]any) string {

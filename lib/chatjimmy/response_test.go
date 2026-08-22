@@ -44,6 +44,30 @@ func TestBuildCompletionPlainText(t *testing.T) {
 	}
 }
 
+func TestBuildCompletionUnknownToolsStayStop(t *testing.T) {
+	tools := []Tool{{
+		Type: "function",
+		Function: ToolFunction{
+			Name:       "bash",
+			Parameters: json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"}}}`),
+		},
+	}}
+	upstream := `Nope.
+<tool_call>
+{"name":"webfetch","arguments":{"url":"https://example.com"}}
+</tool_call>`
+	completion := BuildCompletion("llama3.1-8B", upstream, Usage{}, tools, nil)
+	if completion.Choices[0].FinishReason != "stop" {
+		t.Fatalf("finish_reason = %q, want stop when all tool names are unknown", completion.Choices[0].FinishReason)
+	}
+	if len(completion.Choices[0].Message.ToolCalls) != 0 {
+		t.Fatalf("tool_calls = %+v, want none", completion.Choices[0].Message.ToolCalls)
+	}
+	if completion.Choices[0].Message.Content == nil || *completion.Choices[0].Message.Content != "Nope." {
+		t.Fatalf("content = %#v", completion.Choices[0].Message.Content)
+	}
+}
+
 func TestBuildStreamChunksWithToolCalls(t *testing.T) {
 	content := "working"
 	completion := Completion{

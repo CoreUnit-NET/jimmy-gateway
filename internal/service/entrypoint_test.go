@@ -799,8 +799,11 @@ func TestHandlerChatCompletionsToolChoiceNoneSkipsParse(t *testing.T) {
 	if len(completion.Choices[0].Message.ToolCalls) != 0 {
 		t.Fatalf("tool_calls = %+v", completion.Choices[0].Message.ToolCalls)
 	}
-	if completion.Choices[0].Message.Content == nil || !strings.Contains(*completion.Choices[0].Message.Content, "<tool_call>") {
-		t.Fatalf("content = %#v", completion.Choices[0].Message.Content)
+	if completion.Choices[0].Message.Content == nil {
+		t.Fatal("content is nil")
+	}
+	if strings.Contains(*completion.Choices[0].Message.Content, "<tool_call>") {
+		t.Fatalf("tool_call XML leaked into content: %q", *completion.Choices[0].Message.Content)
 	}
 }
 

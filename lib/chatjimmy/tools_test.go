@@ -69,13 +69,45 @@ func TestParseToolCallsDoesNotInventRequiredArgs(t *testing.T) {
 }
 
 func TestParseToolCallsSkipsWhenNoTools(t *testing.T) {
-	content := `<tool_call>{"name":"read","arguments":{"path":"x"}}</tool_call>`
+	content := `Sure. <tool_call>{"name":"read","arguments":{"path":"x"}}</tool_call>`
 	text, calls := ParseToolCalls(content, nil, func() string { return "call_1" })
 	if len(calls) != 0 {
 		t.Fatalf("calls = %d, want 0 when tools list is empty", len(calls))
 	}
-	if text != content {
-		t.Fatalf("text = %q, want unchanged upstream content", text)
+	if text != "Sure." {
+		t.Fatalf("text = %q, want XML stripped when tools list is empty", text)
+	}
+	if strings.Contains(text, "<tool_call>") {
+		t.Fatalf("tool_call tag leaked into text: %q", text)
+	}
+}
+
+func TestParseToolCallsDropsUnknownNames(t *testing.T) {
+	tools := []Tool{{
+		Type: "function",
+		Function: ToolFunction{
+			Name:       "bash",
+			Parameters: json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}`),
+		},
+	}}
+	content := `<tool_call>
+{"name":"webfetch","arguments":{"url":"https://example.com"}}
+</tool_call>
+<tool_call>
+{"name":"bash","arguments":{"command":"ls"}}
+</tool_call>`
+	text, calls := ParseToolCalls(content, tools, func() string { return "call_1" })
+	if len(calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(calls))
+	}
+	if calls[0].Function.Name != "bash" {
+		t.Fatalf("name = %q, want bash", calls[0].Function.Name)
+	}
+	if calls[0].Function.Arguments != `{"command":"ls"}` {
+		t.Fatalf("arguments = %q", calls[0].Function.Arguments)
+	}
+	if strings.Contains(text, "<tool_call>") || strings.Contains(text, "webfetch") {
+		t.Fatalf("text leaked tool xml or dropped name: %q", text)
 	}
 }
 
