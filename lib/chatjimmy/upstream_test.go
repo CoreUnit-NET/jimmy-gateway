@@ -46,6 +46,58 @@ func TestParseUpstreamTotalTokensFallback(t *testing.T) {
 	}
 }
 
+func TestParseUpstreamStripsThinking(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "think plus answer",
+			raw:  "<think>plan</think>Hello",
+			want: "Hello",
+		},
+		{
+			name: "thinking plus tool xml",
+			raw:  `<thinking>x</thinking><tool_call>{"name":"bash","arguments":{}}</tool_call>`,
+			want: `<tool_call>{"name":"bash","arguments":{}}</tool_call>`,
+		},
+		{
+			name: "reasoning only",
+			raw:  "<reasoning>secret</reasoning>",
+			want: "",
+		},
+		{
+			name: "reflection wrapper",
+			raw:  "<reflection>notes</reflection>Done",
+			want: "Done",
+		},
+		{
+			name: "prose with think word",
+			raw:  "I think this is fine",
+			want: "I think this is fine",
+		},
+		{
+			name: "stats and thinking",
+			raw:  `<think>plan</think>Answer<|stats|>{"prefill_tokens":1,"decode_tokens":2,"total_tokens":3}<|/stats|>`,
+			want: "Answer",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			parsed := ParseUpstream(tc.raw)
+			if parsed.Text != tc.want {
+				t.Fatalf("text = %q, want %q", parsed.Text, tc.want)
+			}
+		})
+	}
+
+	parsed := ParseUpstream(`<think>plan</think>Answer<|stats|>{"prefill_tokens":1,"decode_tokens":2,"total_tokens":3}<|/stats|>`)
+	if parsed.Usage.TotalTokens != 3 {
+		t.Fatalf("usage total = %d, want 3", parsed.Usage.TotalTokens)
+	}
+}
+
 func TestSafeInt(t *testing.T) {
 	tests := []struct {
 		in   any

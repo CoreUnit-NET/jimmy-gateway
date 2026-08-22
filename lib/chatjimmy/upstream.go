@@ -12,6 +12,13 @@ var statsPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?s)<stats>(.*?)</stats>`),
 }
 
+var thinkingPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?s)<think\b[^>]*>.*?</think>`),
+	regexp.MustCompile(`(?s)<thinking\b[^>]*>.*?</thinking>`),
+	regexp.MustCompile(`(?s)<reasoning\b[^>]*>.*?</reasoning>`),
+	regexp.MustCompile(`(?s)<reflection\b[^>]*>.*?</reflection>`),
+}
+
 type ParsedUpstream struct {
 	Text  string
 	Usage Usage
@@ -46,11 +53,21 @@ func ParseUpstream(raw string) ParsedUpstream {
 		}
 	}
 
+	text = stripThinking(text)
+
 	return ParsedUpstream{
 		Text:  strings.TrimSpace(text),
 		Usage: usage,
 		Stats: stats,
 	}
+}
+
+func stripThinking(text string) string {
+	out := text
+	for _, pattern := range thinkingPatterns {
+		out = pattern.ReplaceAllString(out, "")
+	}
+	return strings.TrimSpace(out)
 }
 
 func safeInt(value any) int {
