@@ -126,3 +126,61 @@ func TestNewCompletionIDFormat(t *testing.T) {
 		t.Fatalf("id too short: %q", id)
 	}
 }
+
+func TestAppendUsageChunkOnOff(t *testing.T) {
+	content := "hello"
+	completion := Completion{
+		ID: "chatcmpl-test", Object: "chat.completion", Created: 1, Model: "llama3.1-8B",
+		Choices: []CompletionChoice{{
+			Index: 0,
+			Message: AssistantMessage{
+				Role:    "assistant",
+				Content: &content,
+			},
+			FinishReason: "stop",
+		}},
+		Usage: Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15},
+	}
+	base := BuildStreamChunks(completion)
+
+	without := base
+	if len(without) != len(base) {
+		t.Fatalf("without usage mutated base length")
+	}
+	for _, chunk := range without {
+		if chunk.Usage != nil {
+			t.Fatalf("unexpected usage on base chunk: %+v", chunk.Usage)
+		}
+	}
+
+	with := AppendUsageChunk(base, completion)
+	if len(with) != len(base)+1 {
+		t.Fatalf("chunks = %d, want %d", len(with), len(base)+1)
+	}
+	last := with[len(with)-1]
+	if len(last.Choices) != 0 {
+		t.Fatalf("usage chunk choices = %d, want 0", len(last.Choices))
+	}
+	if last.Usage == nil {
+		t.Fatal("usage chunk missing usage")
+	}
+	if last.Usage.PromptTokens != 10 || last.Usage.CompletionTokens != 5 || last.Usage.TotalTokens != 15 {
+		t.Fatalf("usage = %+v", last.Usage)
+	}
+	if last.ID != completion.ID || last.Object != "chat.completion.chunk" {
+		t.Fatalf("usage chunk id/object = %q %q", last.ID, last.Object)
+	}
+
+	sse := string(EncodeSSEChunks(with))
+	if !strings.Contains(sse, `"prompt_tokens":10`) {
+		t.Fatalf("SSE missing usage: %q", sse)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(sse), "data: [DONE]") {
+		t.Fatalf("SSE missing [DONE]: %q", sse)
+	}
+
+	sseOff := string(EncodeSSEChunks(base))
+	if strings.Contains(sseOff, `"prompt_tokens"`) {
+		t.Fatalf("SSE without include_usage leaked usage: %q", sseOff)
+	}
+}

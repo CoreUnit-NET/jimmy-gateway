@@ -180,6 +180,20 @@ func BuildStreamChunks(completion Completion) []StreamChunk {
 	}
 }
 
+// AppendUsageChunk adds a final OpenAI stream chunk with usage and empty choices.
+// Call only when the client requested stream_options.include_usage.
+func AppendUsageChunk(chunks []StreamChunk, completion Completion) []StreamChunk {
+	usage := completion.Usage
+	return append(chunks, StreamChunk{
+		ID:      completion.ID,
+		Object:  "chat.completion.chunk",
+		Created: completion.Created,
+		Model:   completion.Model,
+		Choices: []StreamChunkChoice{},
+		Usage:   &usage,
+	})
+}
+
 func EncodeSSEChunks(chunks []StreamChunk) []byte {
 	var out []byte
 	for _, chunk := range chunks {

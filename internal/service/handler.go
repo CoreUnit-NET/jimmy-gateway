@@ -144,7 +144,11 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if result.stream {
-		h.writeSSE(w, chatjimmy.EncodeSSEChunks(chatjimmy.BuildStreamChunks(result.completion)))
+		chunks := chatjimmy.BuildStreamChunks(result.completion)
+		if result.includeUsage {
+			chunks = chatjimmy.AppendUsageChunk(chunks, result.completion)
+		}
+		h.writeSSE(w, chatjimmy.EncodeSSEChunks(chunks))
 		return
 	}
 	h.writeJSON(w, http.StatusOK, result.completion)

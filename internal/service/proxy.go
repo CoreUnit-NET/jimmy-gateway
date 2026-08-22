@@ -14,8 +14,9 @@ import (
 const maxRequestBytes = 2 << 20
 
 type chatResult struct {
-	completion chatjimmy.Completion
-	stream     bool
+	completion   chatjimmy.Completion
+	stream       bool
+	includeUsage bool
 }
 
 func readBody(r *http.Request) ([]byte, error) {
@@ -52,7 +53,8 @@ func (h *Handler) completeChat(r *http.Request) (*chatResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &chatResult{completion: completion, stream: req.Stream}, nil
+	includeUsage := req.StreamOptions != nil && req.StreamOptions.IncludeUsage
+	return &chatResult{completion: completion, stream: req.Stream, includeUsage: includeUsage}, nil
 }
 
 func (h *Handler) completeFromChatRequest(r *http.Request, req chatjimmy.ChatRequest, kind string) (chatjimmy.Completion, error) {

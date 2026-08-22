@@ -546,6 +546,54 @@ func TestHandlerChatCompletionsStreamBoolish(t *testing.T) {
 	}
 }
 
+func TestHandlerChatCompletionsStreamIncludeUsage(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`Hi there<|stats|>{"prefill_tokens":11,"decode_tokens":2,"total_tokens":13}<|/stats|>`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	cfg := testSettings()
+	h := NewHandler(nil, cfg, &chatjimmy.Client{URL: upstream.URL})
+
+	t.Run("on", func(t *testing.T) {
+		body := strings.NewReader(`{"stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"hi"}]}`)
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+		}
+		out := rec.Body.String()
+		if !strings.Contains(out, `"prompt_tokens":11`) {
+			t.Fatalf("missing usage chunk: %q", out)
+		}
+		if !strings.Contains(out, `"choices":[]`) {
+			t.Fatalf("usage chunk should have empty choices: %q", out)
+		}
+		if !strings.Contains(out, "data: [DONE]") {
+			t.Fatalf("missing [DONE]: %q", out)
+		}
+	})
+
+	t.Run("off", func(t *testing.T) {
+		body := strings.NewReader(`{"stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+		}
+		out := rec.Body.String()
+		if strings.Contains(out, `"prompt_tokens"`) {
+			t.Fatalf("usage leaked without include_usage: %q", out)
+		}
+		if !strings.Contains(out, "data: [DONE]") {
+			t.Fatalf("missing [DONE]: %q", out)
+		}
+	})
+}
+
 func TestHandlerChatCompletionsUpstreamError(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad gateway", http.StatusBadGateway)
