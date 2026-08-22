@@ -28,7 +28,7 @@ ChatJimmy currently exposes a single public chat endpoint and no native function
 
 ### How it works
 
-1. Client calls OpenAI-compatible HTTP (`GET /`, `GET /health`, `GET /v1/models`, `POST /v1/chat/completions`, `POST /v1/completions`), native `POST /api/chat`, Anthropic `POST /v1/messages`, or Gemini `generateContent` / `streamGenerateContent`. Path aliases (`/api/health`, `/api/v1-models`, `/api/v1-chat-completions`, `/api/v1-completions`) map onto the OpenAI handlers.
+1. Client calls OpenAI-compatible HTTP (`GET /`, `GET /health`, `GET /healthz`, `GET /v1/models`, `POST /v1/chat/completions`, `POST /v1/completions`), native `POST /api/chat`, Anthropic `POST /v1/messages`, or Gemini `generateContent` / `streamGenerateContent`. Path aliases (`/models`, `/chat/completions`, `/completions`, `/api/health`, `/api/v1-models`, `/api/v1-chat-completions`, `/api/v1-completions`) map onto the OpenAI handlers.
 2. Gateway merges system messages, filters OpenCode orchestration tools, injects `<tool_call>` instructions when tools remain (`tool_choice: none` skips that), maps sampling fields into ChatJimmy `chatOptions`, and optionally extracts a single image attachment. Oversized prompts drop the `<tools>` JSON block before the 28K hard slice; `<tool_result>` bodies are capped at 8K.
 3. Upstream talk goes to ChatJimmy over HTTPS (`https://chatjimmy.ai/api/chat` by default) with browser-like `Origin` / `Referer` / `User-Agent` headers. Network / 408 / 429 / 5xx responses retry with backoff; an empty body is retried once on top of that.
 4. The upstream response is parsed: `<|stats|>` / `<stats>` and thinking/reasoning tags are stripped, token usage is extracted, assistant text is kept, and `<tool_call>` XML is converted into OpenAI `tool_calls` only for allow-listed tools from this request (unknown names dropped; raw XML stripped even when tools are empty / `tool_choice: none`). Anthropic and Gemini adapters wrap the same completion.
@@ -40,21 +40,21 @@ ChatJimmy currently exposes a single public chat endpoint and no native function
 
 ### Features
 
-- **OpenAI-compatible API:** `/v1/models`, `/v1/chat/completions`, and legacy `/v1/completions` for text chat, tool calls, and streaming. Health is `GET /` and `GET /health` (`{"status":"ok"}`).
+- **OpenAI-compatible API:** `/v1/models`, `/v1/chat/completions`, and legacy `/v1/completions` for text chat, tool calls, and streaming. Health is `GET /`, `GET /health`, and `GET /healthz` (`{"status":"ok"}`). Unprefixed aliases `/models`, `/chat/completions`, and `/completions` are accepted.
 - **Native ChatJimmy passthrough:** `POST /api/chat` forwards `{messages, chatOptions, attachment}` without OpenAI translation.
 - **Anthropic / Gemini HTTP:** `POST /v1/messages` and Gemini `POST /v1beta/models/{model}:generateContent` (plus `:streamGenerateContent`) reuse the same XML tool layer. Stream flags still buffer until ChatJimmy actually streams.
 - **ChatJimmy upstream:** Proxies to ChatJimmy's Llama 3.1 8B chat endpoint (`https://chatjimmy.ai/api/chat` by default). URL, timeout, and optional upstream Bearer (`CHATJIMMY_API_KEY`) are configurable.
 - **Request translation:** Maps OpenAI `system` / `user` / `assistant` / `tool` messages into ChatJimmy's `{messages, chatOptions, attachment}` payload, including system-prompt merge and assistant/tool round-trips.
 - **Sampling passthrough:** Forwards `temperature` (OpenAI 0–2 scaled to ChatJimmy 0–1), `top_p`, `top_k` / `topK` (default 8), `max_tokens`, and `stop` / `stopSequences`. Native `chatOptions` on the request body are accepted as a fallback.
 - **Model aliases:** `/v1/models` lists `llama3.1-8B` plus common OpenAI / Anthropic / Gemini ids. All of them map to the same upstream model. Extra advertised ids come from `CHATJIMMY_MODELS`.
-- **Tool XML emulation:** Injects Llama-friendly tool instructions and parses `<tool_call>` blocks back into OpenAI `tool_calls` for allow-listed tools only (`tool_choice` of `auto`, `none`, `required`, or a named function). Unknown names are dropped; raw XML is stripped even when tools are empty. `tool_choice: none` skips schema inject and XML parse.
+- **Tool XML emulation:** Injects Llama-friendly tool instructions and parses `<tool_call>` blocks back into OpenAI `tool_calls` for allow-listed tools only (`tool_choice` of `auto`, `none`, `required`, or a named function). Unknown names are dropped; raw XML is stripped even when tools are empty or tags are unclosed. `tool_choice: none` skips schema inject and XML parse.
 - **OpenCode tool filtering:** Strips high-level orchestration tools (`webfetch`, `todowrite`, `skill`, `question`, `task`) before they reach the model so smaller prompts stay on file/shell/search tools.
 - **System prompt safeguard:** Truncates oversized system prompts at 28K characters to avoid ChatJimmy's silent empty-response limit (~30K). Before that hard slice, `<tools>…</tools>` JSON is dropped; `<tool_result>` bodies are capped at 8K characters.
 - **Image attachments:** Forwards one OpenAI `image_url` data-URL or Gemini-style `inlineData` part as ChatJimmy `attachment`.
-- **Stats mapping:** Strips `<|stats|>` / `<stats>` JSON and thinking/reasoning tags, fills OpenAI `usage` from `prefill_tokens` / `decode_tokens` / `total_tokens`, and echoes raw metrics as `chatjimmy_stats`.
+- **Stats mapping:** Strips `<|stats|>` / `<stats>` JSON and thinking/reasoning tags (including unclosed openers), fills OpenAI `usage` from `prefill_tokens` / `decode_tokens` / `total_tokens`, and echoes raw metrics as `chatjimmy_stats`.
 - **Optional gateway auth:** When `API_KEY` is set, chat routes require `Authorization: Bearer …`, `x-api-key`, or `x-goog-api-key` (`OPENAI_API_KEY` is accepted as an alias).
 - **CORS:** OPTIONS and JSON/SSE responses send `Access-Control-Allow-Origin` from `ALLOWED_ORIGIN` (default `*`). A non-wildcard origin also sets `Vary: Origin`. Allow-headers include `x-api-key`.
-- **Buffered streaming:** Upstream responses are buffered first, then emitted as SSE so clients still get protocol-shaped stream chunks (including tool-call deltas after the full XML is parsed). Chat streams may append a final usage chunk when `stream_options.include_usage` is set.
+- **Buffered streaming:** Upstream responses are buffered first, then emitted as SSE so clients still get protocol-shaped stream chunks (including tool-call deltas after the full XML is parsed). Chat and legacy completions streams may append a final usage chunk when `stream_options.include_usage` is set.
 - **Retries:** Network / 408 / 429 / 5xx retry up to 3 extra times with 1s/2s/4s backoff (cap 10s), honoring `Retry-After`. An empty ChatJimmy body is retried once without consuming that budget.
 - **Access logs:** Every request logs method, client path (aliases preserved), status, duration in ms, and remote addr. Chat requests also log a light `kind`/`model`/`upstream` summary.
 - **Verbose logs:** `-b` / `VERBOSE` adds truncation/compaction flags and per-chat token counts on the chat summary line.
@@ -82,7 +82,7 @@ ChatJimmy currently exposes a single public chat endpoint and no native function
 
 Shipped items from the previous list (CORS, upstream config, retries, native `/api/chat`, `tool_choice: none`, Anthropic/Gemini HTTP, tool-JSON compaction, verbose latency logs, extra model ids) are in [Features](#features). Still open if ChatJimmy stays a single chat endpoint:
 
-- **True SSE:** Emit tokens as they arrive if ChatJimmy ever streams instead of returning one body. `TrueSSE` is gated and still buffers.
+- **True SSE:** Emit tokens as they arrive if ChatJimmy ever streams instead of returning one body. Not implemented today — SSE is always post-buffer.
 - **Prompt summarization:** Compact old turns with an LLM when dropping `<tools>` JSON is not enough.
 - **Metrics:** Optional Prometheus / structured metrics beyond verbose logs.
 - **New ChatJimmy models:** Advertise extra ids when Taalas ships the planned mid-size reasoning model (`CHATJIMMY_MODELS` already accepts extras).
@@ -128,7 +128,7 @@ The gateway exposes OpenAI-compatible endpoints plus native ChatJimmy, Anthropic
 
 | Method | Path | Description |
 | ------ | ---- | ----------- |
-| `GET`  | `/`, `/health` | Health check (`{"status":"ok"}`) |
+| `GET`  | `/`, `/health`, `/healthz` | Health check (`{"status":"ok"}`) |
 | `GET`  | `/v1/models` | List advertised model ids |
 | `POST` | `/v1/chat/completions` | OpenAI chat completion (JSON or buffered SSE) |
 | `POST` | `/v1/completions` | OpenAI legacy text completion (JSON or buffered SSE) |
@@ -137,7 +137,7 @@ The gateway exposes OpenAI-compatible endpoints plus native ChatJimmy, Anthropic
 | `POST` | `/v1beta/models/{model}:generateContent` | Gemini generate (JSON) |
 | `POST` | `/v1beta/models/{model}:streamGenerateContent` | Gemini stream (buffered SSE) |
 
-Aliases: `/api` → `/`, `/api/health` → `/health`, `/api/v1-models` → `/v1/models`, `/api/v1-chat-completions` → `/v1/chat/completions`, `/api/v1-completions` → `/v1/completions`.
+Aliases: `/api` → `/`, `/api/health` → `/health`, `/models` → `/v1/models`, `/chat/completions` → `/v1/chat/completions`, `/completions` → `/v1/completions`, `/api/v1-models` → `/v1/models`, `/api/v1-chat-completions` → `/v1/chat/completions`, `/api/v1-completions` → `/v1/completions`.
 
 `POST /api/chat` forwards the ChatJimmy payload as-is and returns the raw upstream body as `text/plain`. Anthropic and Gemini wrap the same XML tool layer as OpenAI; stream flags still buffer until ChatJimmy actually streams.
 
@@ -171,7 +171,7 @@ curl -s http://127.0.0.1:8080/v1/completions \
   -d '{"model":"llama3.1-8B","prompt":"Hello","max_tokens":32}'
 ```
 
-When `stream: true`, responses use SSE chunks in the standard `chat.completion.chunk` / `text_completion` format, then `data: [DONE]`. Chat streams may include a final usage chunk when `stream_options.include_usage` is set.
+When `stream: true`, responses use SSE chunks in the standard `chat.completion.chunk` / `text_completion` format, then `data: [DONE]`. Chat and legacy completions streams may include a final usage chunk when `stream_options.include_usage` is set.
 
 Non-stream JSON also includes OpenAI `usage` and optional `chatjimmy_stats` from the upstream `<|stats|>` block. `finish_reason` is `tool_calls` when XML tools were parsed, otherwise `stop` or `length` from stats.
 
