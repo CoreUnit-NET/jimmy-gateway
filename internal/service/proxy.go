@@ -57,6 +57,24 @@ func (h *Handler) completeChat(r *http.Request) (*chatResult, error) {
 	return &chatResult{completion: completion, stream: req.Stream, includeUsage: includeUsage}, nil
 }
 
+func (h *Handler) completeText(r *http.Request) (*chatResult, error) {
+	body, err := readBody(r)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := chatjimmy.CompletionsToChatRequest(body)
+	if err != nil {
+		return nil, badRequest(err.Error())
+	}
+
+	completion, err := h.completeFromChatRequest(r, req, "openai")
+	if err != nil {
+		return nil, err
+	}
+	return &chatResult{completion: completion, stream: req.Stream}, nil
+}
+
 func (h *Handler) completeFromChatRequest(r *http.Request, req chatjimmy.ChatRequest, kind string) (chatjimmy.Completion, error) {
 	if kind == "" {
 		kind = "adapter"

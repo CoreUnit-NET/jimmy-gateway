@@ -54,6 +54,8 @@ check_status "GET /missing" 404 GET /missing
 check_status "POST /v1/models" 405 POST /v1/models
 check_status "POST /health" 405 POST /health
 check_status "GET /v1/chat/completions" 405 GET /v1/chat/completions
+check_status "GET /v1/completions" 405 GET /v1/completions
+check_status "GET /api/v1-completions alias" 405 GET /api/v1-completions
 check_status "GET /api/chat" 405 GET /api/chat "${auth_args[@]}"
 check_status "GET /v1/messages" 405 GET /v1/messages "${auth_args[@]}"
 check_status "GET gemini generate" 405 GET "/v1beta/models/gemini-1.5-flash:generateContent" "${auth_args[@]}"
@@ -76,6 +78,12 @@ check_status "POST chat invalid JSON" 400 POST /v1/chat/completions \
   "${auth_args[@]}" -H 'Content-Type: application/json' -d 'not-json'
 check_status "POST chat empty messages" 400 POST /v1/chat/completions \
   "${auth_args[@]}" -H 'Content-Type: application/json' -d '{"messages":[]}'
+check_status "POST completions invalid JSON" 400 POST /v1/completions \
+  "${auth_args[@]}" -H 'Content-Type: application/json' -d 'not-json'
+check_status "POST completions missing prompt" 400 POST /v1/completions \
+  "${auth_args[@]}" -H 'Content-Type: application/json' -d '{"model":"llama3.1-8B"}'
+check_status "POST completions empty prompt" 400 POST /v1/completions \
+  "${auth_args[@]}" -H 'Content-Type: application/json' -d '{"prompt":""}'
 check_status "POST native empty messages" 400 POST /api/chat \
   "${auth_args[@]}" -H 'Content-Type: application/json' -d '{"messages":[]}'
 check_status "POST anthropic empty messages" 400 POST /v1/messages \

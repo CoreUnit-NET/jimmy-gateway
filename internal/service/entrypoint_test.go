@@ -522,6 +522,87 @@ func TestHandlerChatCompletionsRejectsN(t *testing.T) {
 	}
 }
 
+func TestHandlerCompletions(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`completion text`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	cfg := testSettings()
+	h := NewHandler(nil, cfg, &chatjimmy.Client{URL: upstream.URL})
+
+	t.Run("string prompt", func(t *testing.T) {
+		body := strings.NewReader(`{"model":"llama3.1-8B","prompt":"Say hi","max_tokens":8}`)
+		req := httptest.NewRequest(http.MethodPost, "/v1/completions", body)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+		}
+		var out chatjimmy.TextCompletion
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if out.Object != "text_completion" {
+			t.Fatalf("object = %q", out.Object)
+		}
+		if !strings.HasPrefix(out.ID, "cmpl-") {
+			t.Fatalf("id = %q", out.ID)
+		}
+		if len(out.Choices) != 1 || out.Choices[0].Text != "completion text" {
+			t.Fatalf("choices = %+v", out.Choices)
+		}
+	})
+
+	t.Run("array prompt", func(t *testing.T) {
+		body := strings.NewReader(`{"prompt":["a","b"]}`)
+		req := httptest.NewRequest(http.MethodPost, "/v1/completions", body)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("alias", func(t *testing.T) {
+		body := strings.NewReader(`{"prompt":"hi"}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1-completions", body)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("stream", func(t *testing.T) {
+		body := strings.NewReader(`{"prompt":"hi","stream":true}`)
+		req := httptest.NewRequest(http.MethodPost, "/v1/completions", body)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Header().Get("Content-Type"), "text/event-stream") {
+			t.Fatalf("content-type = %q", rec.Header().Get("Content-Type"))
+		}
+		out := rec.Body.String()
+		if !strings.Contains(out, `"text":"completion text"`) || !strings.Contains(out, "data: [DONE]") {
+			t.Fatalf("body = %q", out)
+		}
+	})
+
+	t.Run("missing prompt", func(t *testing.T) {
+		body := strings.NewReader(`{"model":"llama3.1-8B"}`)
+		req := httptest.NewRequest(http.MethodPost, "/v1/completions", body)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", rec.Code)
+		}
+	})
+}
+
 func TestHandlerChatCompletionsStreamBoolish(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.ReadAll(r.Body)

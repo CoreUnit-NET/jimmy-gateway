@@ -71,6 +71,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.handleChatCompletions(sw, r)
+	case path == "/v1/completions":
+		if r.Method != http.MethodPost {
+			h.writeOpenAIError(sw, "Method not allowed", "invalid_request_error", "method_not_allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !h.authorize(r) {
+			h.writeOpenAIError(sw, "Invalid API key", "invalid_api_key", "invalid_api_key", http.StatusUnauthorized)
+			return
+		}
+		h.handleCompletions(sw, r)
 	case path == "/api/chat":
 		if r.Method != http.MethodPost {
 			h.writeOpenAIError(sw, "Method not allowed", "invalid_request_error", "method_not_allowed", http.StatusMethodNotAllowed)
@@ -152,6 +162,26 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	h.writeJSON(w, http.StatusOK, result.completion)
+}
+
+func (h *Handler) handleCompletions(w http.ResponseWriter, r *http.Request) {
+	result, err := h.completeText(r)
+	if err != nil {
+		var pe *proxyError
+		if errors.As(err, &pe) {
+			h.writeOpenAIError(w, pe.message, pe.typ, pe.code, pe.status)
+			return
+		}
+		h.writeOpenAIError(w, err.Error(), "api_error", "upstream_error", http.StatusBadGateway)
+		return
+	}
+
+	text := chatjimmy.ChatToTextCompletion(result.completion)
+	if result.stream {
+		h.writeSSE(w, chatjimmy.EncodeTextSSEChunks(chatjimmy.BuildTextStreamChunks(text)))
+		return
+	}
+	h.writeJSON(w, http.StatusOK, text)
 }
 
 func (h *Handler) authorize(r *http.Request) bool {
